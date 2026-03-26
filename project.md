@@ -1,0 +1,14 @@
+Project: Mac Voice
+Project Goal: A macOS menu bar application built in Swift that provides system-wide voice-to-text input for active text fields, designed to make prompt writing, chat replies, and general text entry faster and more natural.
+
+The application lives in the Mac menu bar and stays accessible at all times without needing to occupy space as a traditional desktop window. From the menu bar, the user can manage the app’s behavior, including setting a preferred activation shortcut, adjusting speech command timing, and configuring how recording and submission should behave.
+
+One of the main interactions is a customizable global shortcut, such as pressing Control twice. When that shortcut is triggered while the user is focused inside a text field, especially in places like VS Code, Copilot Chat, or similar input areas, the app starts a voice capture session tied to that currently active field. As part of that flow, it first pauses any background media that may be playing, including sources such as Spotify, YouTube, or other system audio playback, so that speech can be captured cleanly. Once background audio has been paused, the app plays a short beep to signal that recording is active and the user can begin speaking.
+
+The user can then speak a voice note naturally. The app records the audio and listens for a spoken send phrase such as “OK, send.” That phrase is not treated as an instant submit trigger on its own. Instead, the app applies a configurable silence threshold after the phrase is spoken, so the command is only considered intentional if it is followed by a defined amount of silence. This makes the behavior more reliable in real use, especially in situations where the words “OK, send” may appear inside normal speech rather than as an actual instruction to submit.
+
+After the recording session ends, the captured audio is sent to a locally running Whisper model for transcription. The spoken content is converted into text on the user’s machine, after which the app returns to the text field that was active when recording began, inserts the transcribed text directly into that field, and triggers Enter so the message is submitted automatically.
+
+Alongside shortcut-based activation, the app also supports an always-listening voice trigger. When the user says “okay, voice,” the same workflow begins automatically: background media is paused, the readiness beep is played, recording starts, the send phrase is monitored with the same silence-based validation, the audio is transcribed locally, and the resulting text is inserted into the previously active field before being submitted.
+
+Overall, the application acts as a lightweight voice-command layer for macOS, combining menu bar accessibility, keyboard and wake-phrase activation, media interruption, local Whisper transcription, contextual text insertion, and automatic submission into a smooth hands-free input workflow.
