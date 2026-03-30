@@ -220,3 +220,17 @@ swift build          # Build the project
 swift test           # Run tests
 open Package.swift   # Open in Xcode
 ```
+
+### CRITICAL: Always Build and Relaunch After Code Changes
+
+After **any** source code change, you **MUST** build, rebuild the app bundle, and relaunch. Never leave the old app running.
+
+```bash
+cd /Volumes/Byron\ Beats/savedpixel/mac-voice
+swift build
+kill $(pgrep -f "Mac Voice") 2>/dev/null
+bash scripts/build-app.sh
+open "/Volumes/Byron Beats/savedpixel/mac-voice/build/Mac Voice.app"
+```
+
+This applies to every change — not just UI changes. Always build + relaunch immediately after editing source files. Never skip this step.
