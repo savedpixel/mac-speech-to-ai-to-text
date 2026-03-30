@@ -1,0 +1,28 @@
+# Xcode / Apple
+.DS_Store
+xcuserdata/
+*.xcworkspace/
+*.xcuserdatad
+*.xcodeproj/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Build Output
+build/
+
+# Docs
+docs/
+
+# Removals / Tests
+beeps/
+generate-test.swift
+visibility_test.swift
+test_section.swift
+toggle_test.swift
+
+# Misc assets & project notes
+icon.png
+icon2.png
+project.md
