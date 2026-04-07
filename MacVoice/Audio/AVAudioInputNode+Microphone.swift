@@ -5,15 +5,16 @@ import os
 extension AVAudioInputNode {
     private static let logger = Logger(subsystem: "com.macvoice.app", category: "audio")
 
-    func applyPreferredInputDevice(uid: String) {
+    @discardableResult
+    func applyPreferredInputDevice(uid: String) -> Bool {
         guard let deviceID = audioDeviceID(forUID: uid) else {
             Self.logger.warning("Selected microphone not found for uid=\(uid, privacy: .public)")
-            return
+            return false
         }
 
         guard let audioUnit = self.audioUnit else {
             Self.logger.error("Input audio unit unavailable; cannot set preferred microphone")
-            return
+            return false
         }
 
         var mutableID = deviceID
@@ -28,38 +29,33 @@ extension AVAudioInputNode {
 
         if status != noErr {
             Self.logger.error("Failed to set preferred microphone (status=\(status, privacy: .public))")
+            return false
         } else {
             Self.logger.info("Using preferred microphone uid=\(uid, privacy: .public)")
+            return true
         }
     }
 
     private func audioDeviceID(forUID uid: String) -> AudioDeviceID? {
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
+            mSelector: kAudioHardwarePropertyTranslateUIDToDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
 
-        var size: UInt32 = 0
-        AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size)
-        let deviceCount = Int(size) / MemoryLayout<AudioDeviceID>.size
-        var devices = [AudioDeviceID](repeating: 0, count: deviceCount)
-        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &devices)
+        var uidString: CFString = uid as CFString
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            UInt32(MemoryLayout<CFString>.size),
+            &uidString,
+            &size,
+            &deviceID
+        )
 
-        for device in devices {
-            var uidString: CFString? = nil
-            var uidSize = UInt32(MemoryLayout<CFString?>.size)
-            var uidAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceUID,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-
-            let status = AudioObjectGetPropertyData(device, &uidAddress, 0, nil, &uidSize, &uidString)
-            if status == noErr, let currentUID = uidString as String?, currentUID == uid {
-                return device
-            }
-        }
-        return nil
+        guard status == noErr, deviceID != 0 else { return nil }
+        return deviceID
     }
 }

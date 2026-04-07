@@ -16,6 +16,7 @@ struct MacVoiceApp: App {
                 audioPlayer: appDelegate.audioPlayer,
                 audioSignalPlayer: appDelegate.audioSignalPlayer
             )
+            .groupBoxStyle(MacVoiceGroupBoxStyle())
         }
         .defaultSize(width: 1080, height: 720)
     }

@@ -39,6 +39,11 @@ final class AudioSignalPlayer {
         logger.debug("Ready beep played")
     }
 
+    func playRecordingFinishedBeep() async {
+        await playPreset()
+        logger.debug("Recording finished beep played")
+    }
+
     func playTranscriptionDoneBeep() async {
         await playPreset()
         logger.debug("Transcription done beep played")

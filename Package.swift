@@ -19,6 +19,9 @@ let package = Package(
                 "HotKey",
             ],
             path: "MacVoice",
+            resources: [
+                .process("Audio/Sounds")
+            ],
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
             ]

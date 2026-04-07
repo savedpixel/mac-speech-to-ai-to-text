@@ -21,10 +21,10 @@ final class RecordingOverlayPanel {
             audioRecorder: audioRecorder
         )
         let hostingView = NSHostingView(rootView: overlayView)
-        hostingView.frame = NSRect(x: 0, y: 0, width: 320, height: 220)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 520, height: 380)
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 220),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 380),
             styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
             backing: .buffered,
             defer: false
@@ -41,8 +41,8 @@ final class RecordingOverlayPanel {
         // Center on screen
         if let screen = NSScreen.main {
             let screenFrame = screen.visibleFrame
-            let x = screenFrame.midX - 160
-            let y = screenFrame.midY - 110
+            let x = screenFrame.midX - 260
+            let y = screenFrame.midY - 190
             panel.setFrameOrigin(NSPoint(x: x, y: y))
         }
 

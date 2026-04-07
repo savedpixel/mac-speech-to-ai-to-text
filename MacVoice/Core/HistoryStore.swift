@@ -42,7 +42,11 @@ final class HistoryStore {
     }
 
     var failedRecords: [TranscriptionRecord] {
-        records.filter { if case .failed = $0.transcriptionStatus { return true }; return false }
+        records.filter {
+            if case .failed = $0.transcriptionStatus { return true }
+            if $0.cleanupFailed { return true }
+            return false
+        }
     }
 
     func records(inFolder folderID: UUID) -> [TranscriptionRecord] {

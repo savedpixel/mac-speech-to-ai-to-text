@@ -55,6 +55,9 @@ struct HistoryContentView: View {
     @State private var selectedRecord: TranscriptionRecord?
     @State private var selectedPromptID: UUID?
 
+    private var hasFailedRecords: Bool { !historyStore.failedRecords.isEmpty }
+    private var folderIDs: Set<UUID> { Set(historyStore.folders.map(\.id)) }
+
     var body: some View {
         NavigationSplitView {
             List(selection: $selectedSection) {
@@ -66,11 +69,6 @@ struct HistoryContentView: View {
                 Section("Library") {
                     Label("All", systemImage: "tray.full")
                         .tag(HistorySection.all)
-                        .onDrop(of: [.plainText], isTargeted: nil) { providers in
-                            handleDrop(providers, toFolder: nil, unarchive: true)
-                        }
-                    Label("Unfiled", systemImage: "tray")
-                        .tag(HistorySection.unfiled)
                         .onDrop(of: [.plainText], isTargeted: nil) { providers in
                             handleDrop(providers, toFolder: nil, unarchive: true)
                         }
@@ -99,8 +97,10 @@ struct HistoryContentView: View {
                         .onDrop(of: [.plainText], isTargeted: nil) { providers in
                             handleDropToArchive(providers)
                         }
-                    Label("Failed", systemImage: "exclamationmark.circle")
-                        .tag(HistorySection.failed)
+                    if hasFailedRecords {
+                        Label("Failed", systemImage: "exclamationmark.circle")
+                            .tag(HistorySection.failed)
+                    }
                 }
             }
             .safeAreaInset(edge: .bottom) {
@@ -129,6 +129,9 @@ struct HistoryContentView: View {
                 .background(.background)
             }
             .navigationSplitViewColumnWidth(min: 170, ideal: 190)
+            .onAppear(perform: normalizeSelectedSection)
+            .onChange(of: hasFailedRecords) { _, _ in normalizeSelectedSection() }
+            .onChange(of: folderIDs) { _, _ in normalizeSelectedSection() }
             .toolbar {
                 ToolbarItem {
                     Button(action: addFolder) {
@@ -192,6 +195,19 @@ struct HistoryContentView: View {
         _ = historyStore.createFolder(name: "New Folder")
     }
 
+    private func normalizeSelectedSection() {
+        switch selectedSection {
+        case .unfiled:
+            selectedSection = .all
+        case .failed where !hasFailedRecords:
+            selectedSection = .all
+        case .folder(let id) where !folderIDs.contains(id):
+            selectedSection = .all
+        default:
+            break
+        }
+    }
+
     private func handleDrop(_ providers: [NSItemProvider], toFolder folderID: UUID?, unarchive: Bool) -> Bool {
         var handled = false
         for provider in providers {
@@ -237,6 +253,7 @@ struct SettingsContentView: View {
     @State private var savedTimer: Timer?
     @State private var testState: TestConnectionState = .idle
     @State private var microphones: [MicrophoneOption] = []
+    @State private var didAppear = false
 
     private enum TestConnectionState {
         case idle
@@ -288,7 +305,15 @@ struct SettingsContentView: View {
         .onChange(of: settings.aiCleanupEnabled) { _, _ in flashSaved() }
         .onChange(of: settings.aiCleanupProvider) { _, _ in flashSaved() }
         .onChange(of: settings.aiCleanupModelID) { _, _ in flashSaved() }
-        .onAppear { microphones = AudioRecorder.availableMicrophones() }
+        .onChange(of: settings.soundPreset) { oldValue, newValue in
+            guard didAppear, oldValue != newValue else { return }
+            flashSaved()
+            Task { await audioSignalPlayer.playReadyBeep() }
+        }
+        .onAppear {
+            refreshMicrophones()
+            didAppear = true
+        }
     }
 
     // MARK: - Sections
@@ -340,6 +365,12 @@ struct SettingsContentView: View {
                 .disabled(!settings.insertPhraseEnabled)
                 .opacity(settings.insertPhraseEnabled ? 1.0 : 0.5)
 
+            if settings.insertPhraseEnabled && !settings.autoInsertEnabled && !settings.keepMicrophoneConnected {
+                Text("If insert phrase is enabled, the microphone stays connected after recording until the insert phrase is spoken or the result is dismissed.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Toggle("Auto-Insert After Transcription", isOn: $settings.autoInsertEnabled)
         }
     }
@@ -375,6 +406,7 @@ struct SettingsContentView: View {
                         Text(preset.displayName).tag(preset.rawValue)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button {
                     Task { await audioSignalPlayer.playReadyBeep() }
@@ -609,6 +641,14 @@ struct SettingsContentView: View {
         }
     }
 
+    private func refreshMicrophones() {
+        microphones = AudioRecorder.availableMicrophones()
+        if !settings.selectedMicrophoneID.isEmpty &&
+            !microphones.contains(where: { $0.id == settings.selectedMicrophoneID }) {
+            settings.selectedMicrophoneID = ""
+        }
+    }
+
     private func testConnection() {
         testState = .testing
         Task {
@@ -657,21 +697,25 @@ private struct ShortcutBindingRowView: View {
                     binding.modifiers = modifiers
                 }
             )
+            .frame(width: 96, alignment: .leading)
 
-            Picker("Prompt", selection: $binding.promptID) {
-                Text("Default Prompt").tag(Optional<UUID>.none)
-                ForEach(promptStore.prompts) { prompt in
-                    Text(prompt.name).tag(Optional(prompt.id))
+            HStack(spacing: 8) {
+                Picker("Prompt", selection: $binding.promptID) {
+                    Text("Default Prompt").tag(Optional<UUID>.none)
+                    ForEach(promptStore.prompts) { prompt in
+                        Text(prompt.name).tag(Optional(prompt.id))
+                    }
                 }
-            }
+                .labelsHidden()
+                .frame(width: 220, alignment: .trailing)
 
-            Spacer()
-
-            Button(role: .destructive, action: onDelete) {
-                Image(systemName: "minus.circle.fill")
-                    .foregroundStyle(.red)
+                Button(role: .destructive, action: onDelete) {
+                    Image(systemName: "minus.circle.fill")
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.borderless)
             }
-            .buttonStyle(.borderless)
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
 }

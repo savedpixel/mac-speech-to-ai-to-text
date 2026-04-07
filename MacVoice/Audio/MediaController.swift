@@ -28,7 +28,7 @@ final class MediaController {
         pausedApp = nil
         pausedWithMediaKey = false
 
-        if isSpotifyPlaying() {
+        if isSpotifyRunning(), isSpotifyPlaying() {
             pressPlayPauseKey()
             pausedApp = "Spotify"
             pausedWithMediaKey = true
@@ -84,6 +84,10 @@ final class MediaController {
 
     private func isSpotifyPlaying() -> Bool {
         runAppleScript("tell application \"Spotify\" to return player state as string") == "playing"
+    }
+
+    private func isSpotifyRunning() -> Bool {
+        runAppleScript("tell application \"System Events\" to (name of processes) contains \"Spotify\"") == "true"
     }
 
     private func pressPlayPauseKey() {

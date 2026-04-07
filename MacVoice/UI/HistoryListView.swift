@@ -10,6 +10,10 @@ struct HistoryListView: View {
     @State private var searchText = ""
     @State private var showDeleteConfirmation = false
 
+    private var filteredRecordIDs: [UUID] {
+        filteredRecords.map(\.id)
+    }
+
     private var filteredRecords: [TranscriptionRecord] {
         let base: [TranscriptionRecord]
         switch section {
@@ -110,6 +114,21 @@ struct HistoryListView: View {
                 }
             }
         }
+        .onChange(of: filteredRecordIDs) { _, newValue in
+            let validIDs = Set(newValue)
+            selectedIDs = selectedIDs.intersection(validIDs)
+
+            if let selectedID = selectedIDs.first,
+               let record = filteredRecords.first(where: { $0.id == selectedID }) {
+                selectedRecord = record
+            } else if let first = filteredRecords.first {
+                selectedIDs = [first.id]
+                selectedRecord = first
+            } else {
+                selectedIDs.removeAll()
+                selectedRecord = nil
+            }
+        }
         .toolbar {
             ToolbarItemGroup {
                 if !selectedIDs.isEmpty {
@@ -206,6 +225,16 @@ struct HistoryDetailView: View {
     @State private var retranscribePromptID: UUID = CleanupPrompt.default.id
     @State private var retranscribeProgress: RetranscribeProgress = .idle
     @State private var cachedAudioURL: URL?
+    @State private var retranscribeMode: RetranscribeMode = .transcribeAndClean
+    @State private var copiedClean = false
+    @State private var copiedRaw = false
+    @State private var copiedProgress = false
+
+    private enum RetranscribeMode {
+        case transcribeOnly
+        case cleanOnly
+        case transcribeAndClean
+    }
 
     private enum RetranscribeProgress: Equatable {
         case idle
@@ -254,24 +283,26 @@ struct HistoryDetailView: View {
 
                 // Metadata row
                 HStack(spacing: 12) {
-                    HStack(spacing: 4) {
-                        Text("Folder:")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Picker("", selection: Binding(
-                            get: { record.folderID },
-                            set: { newFolder in
-                                historyStore.moveRecords([record.id], toFolder: newFolder)
+                    if !historyStore.folders.isEmpty || record.folderID != nil {
+                        HStack(spacing: 4) {
+                            Text("Folder:")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Picker("", selection: Binding(
+                                get: { record.folderID },
+                                set: { newFolder in
+                                    historyStore.moveRecords([record.id], toFolder: newFolder)
+                                }
+                            )) {
+                                Text("Unfiled").tag(UUID?.none)
+                                ForEach(historyStore.folders) { folder in
+                                    Text(folder.name).tag(UUID?.some(folder.id))
+                                }
                             }
-                        )) {
-                            Text("Unfiled").tag(UUID?.none)
-                            ForEach(historyStore.folders) { folder in
-                                Text(folder.name).tag(UUID?.some(folder.id))
-                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .fixedSize()
                         }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .fixedSize()
                     }
 
                     if let model = record.whisperModel {
@@ -291,15 +322,22 @@ struct HistoryDetailView: View {
 
                 // Playback bar
                 if let audioURL = cachedAudioURL {
-                    GroupBox("Recording") {
-                        HStack(spacing: 12) {
+                    GroupBox {
+                        HStack(alignment: .center, spacing: 10) {
+                            Text("Recording")
+                                .font(.headline)
+                                .lineLimit(1)
+                                .fixedSize()
+
                             Button {
                                 audioPlayer.togglePlayPause(url: audioURL)
                             } label: {
                                 Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                    .font(.title2)
+                                    .font(.system(size: 20, weight: .semibold))
+                                    .frame(width: 20, height: 20, alignment: .center)
                             }
                             .buttonStyle(.plain)
+                            .frame(height: 20, alignment: .center)
 
                             if audioPlayer.duration > 0 {
                                 Slider(
@@ -319,16 +357,57 @@ struct HistoryDetailView: View {
                     }
                 }
 
-                // Re-transcribe button
-                if record.audioFileName != nil {
-                    Button {
-                        retranscribeModel = settings.whisperModel
-                        retranscribePromptID = promptStore.selectedPromptID
-                        showRetranscribeSheet = true
-                    } label: {
-                        Label("Re-transcribe", systemImage: "arrow.triangle.2.circlepath")
+                // Action buttons
+                HStack(spacing: 8) {
+                    if record.audioFileName != nil {
+                        Button {
+                            retranscribeMode = .transcribeOnly
+                            retranscribeModel = settings.whisperModel
+                            showRetranscribeSheet = true
+                        } label: {
+                            Label("Re-transcribe", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button {
+                            retranscribeMode = .transcribeAndClean
+                            retranscribeModel = settings.whisperModel
+                            retranscribePromptID = promptStore.selectedPromptID
+                            showRetranscribeSheet = true
+                        } label: {
+                            Label("Re-transcribe & Clean", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.bordered)
+
+                    if !record.rawText.isEmpty {
+                        Button {
+                            retranscribeMode = .cleanOnly
+                            retranscribePromptID = promptStore.selectedPromptID
+                            showRetranscribeSheet = true
+                        } label: {
+                            Label("Re-clean", systemImage: "sparkles")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+
+                // Cleanup failure indicator
+                if record.cleanupFailed {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.caption)
+                        Text("AI cleanup failed")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        if let reason = record.cleanupFailureReason {
+                            Text("— \(reason)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
                 }
 
                 // Transcription text
@@ -345,9 +424,11 @@ struct HistoryDetailView: View {
                             Text("Cleaned Text")
                                 .font(.headline)
                             Spacer()
-                            Button("Copy") {
+                            Button(copiedClean ? "Copied!" : "Copy") {
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(cleaned, forType: .string)
+                                copiedClean = true
+                                Task { try? await Task.sleep(for: .seconds(1.5)); copiedClean = false }
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
@@ -364,9 +445,11 @@ struct HistoryDetailView: View {
                             Text("Raw Text")
                                 .font(.headline)
                             Spacer()
-                            Button("Copy") {
+                            Button(copiedRaw ? "Copied!" : "Copy") {
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(record.rawText, forType: .string)
+                                copiedRaw = true
+                                Task { try? await Task.sleep(for: .seconds(1.5)); copiedRaw = false }
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
@@ -401,24 +484,37 @@ struct HistoryDetailView: View {
 
     private var retranscribeSheet: some View {
         VStack(spacing: 16) {
-            Text("Re-transcribe Recording")
-                .font(.headline)
+            switch retranscribeMode {
+            case .transcribeOnly:
+                Text("Re-transcribe Recording")
+                    .font(.headline)
+            case .cleanOnly:
+                Text("Re-clean with AI")
+                    .font(.headline)
+            case .transcribeAndClean:
+                Text("Re-transcribe & Clean")
+                    .font(.headline)
+            }
 
-            Picker("Model:", selection: $retranscribeModel) {
-                if transcriptionEngine.availableModels.isEmpty {
-                    ForEach(Settings.fallbackModels, id: \.self) { model in
-                        Text(Settings.whisperModelDisplayName(model)).tag(model)
-                    }
-                } else {
-                    ForEach(transcriptionEngine.availableModels, id: \.self) { model in
-                        Text(Settings.whisperModelDisplayName(model)).tag(model)
+            if retranscribeMode != .cleanOnly {
+                Picker("Model:", selection: $retranscribeModel) {
+                    if transcriptionEngine.availableModels.isEmpty {
+                        ForEach(Settings.fallbackModels, id: \.self) { model in
+                            Text(Settings.whisperModelDisplayName(model)).tag(model)
+                        }
+                    } else {
+                        ForEach(transcriptionEngine.availableModels, id: \.self) { model in
+                            Text(Settings.whisperModelDisplayName(model)).tag(model)
+                        }
                     }
                 }
             }
 
-            Picker("Cleanup Prompt:", selection: $retranscribePromptID) {
-                ForEach(promptStore.prompts) { prompt in
-                    Text(prompt.name).tag(prompt.id)
+            if retranscribeMode != .transcribeOnly {
+                Picker("Cleanup Prompt:", selection: $retranscribePromptID) {
+                    ForEach(promptStore.prompts) { prompt in
+                        Text(prompt.name).tag(prompt.id)
+                    }
                 }
             }
 
@@ -428,9 +524,22 @@ struct HistoryDetailView: View {
                 }
                 .buttonStyle(.bordered)
 
-                Button("Re-transcribe") {
+                Button({
+                    switch retranscribeMode {
+                    case .transcribeOnly: return "Re-transcribe"
+                    case .cleanOnly: return "Re-clean"
+                    case .transcribeAndClean: return "Re-transcribe & Clean"
+                    }
+                }() as String) {
                     showRetranscribeSheet = false
-                    performRetranscription()
+                    switch retranscribeMode {
+                    case .transcribeOnly:
+                        performRetranscription(withCleanup: false)
+                    case .cleanOnly:
+                        performReclean()
+                    case .transcribeAndClean:
+                        performRetranscription(withCleanup: true)
+                    }
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -468,10 +577,20 @@ struct HistoryDetailView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: 150)
-                Button("Done") {
-                    retranscribeProgress = .idle
+                HStack(spacing: 10) {
+                    Button(copiedProgress ? "Copied!" : "Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(text, forType: .string)
+                        copiedProgress = true
+                        Task { try? await Task.sleep(for: .seconds(1.5)); copiedProgress = false }
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Done") {
+                        retranscribeProgress = .idle
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
-                .buttonStyle(.borderedProminent)
             case .failed(let msg):
                 Image(systemName: "xmark.circle.fill")
                     .font(.largeTitle)
@@ -490,7 +609,7 @@ struct HistoryDetailView: View {
         .frame(minWidth: 340, minHeight: 160)
     }
 
-    private func performRetranscription() {
+    private func performRetranscription(withCleanup: Bool) {
         guard let audioURL = historyStore.audioFileURL(for: record) else { return }
         retranscribeProgress = .transcribing
 
@@ -503,9 +622,17 @@ struct HistoryDetailView: View {
                 let rawText = try await transcriptionEngine.transcribe(audioFileURL: audioURL)
 
                 var cleanedText: String? = nil
-                if settings.aiCleanupEnabled {
+                var cleanupFailed = false
+                var cleanupFailureReason: String? = nil
+
+                if withCleanup {
                     await MainActor.run { retranscribeProgress = .cleaning }
-                    cleanedText = try? await transcriptionCleaner.clean(rawText)
+                    do {
+                        cleanedText = try await transcriptionCleaner.clean(rawText, promptID: retranscribePromptID)
+                    } catch {
+                        cleanupFailed = true
+                        cleanupFailureReason = error.localizedDescription
+                    }
                 }
 
                 let entry = RetranscriptionEntry(
@@ -521,17 +648,53 @@ struct HistoryDetailView: View {
                 updated.cleanedText = cleanedText
                 updated.transcriptionStatus = .success
                 updated.whisperModel = retranscribeModel
+                updated.cleanupFailed = cleanupFailed
+                updated.cleanupFailureReason = cleanupFailureReason
                 var history = updated.retranscriptionHistory ?? []
                 history.append(entry)
                 updated.retranscriptionHistory = history
                 historyStore.updateRecord(updated)
 
                 await MainActor.run {
-                    retranscribeProgress = .done(cleanedText ?? rawText)
+                    if cleanupFailed {
+                        retranscribeProgress = .done(rawText)
+                    } else {
+                        retranscribeProgress = .done(cleanedText ?? rawText)
+                    }
                 }
             } catch {
                 await MainActor.run {
                     retranscribeProgress = .failed("Re-transcription failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func performReclean() {
+        guard !record.rawText.isEmpty else { return }
+        retranscribeProgress = .cleaning
+
+        Task {
+            do {
+                let cleanedText = try await transcriptionCleaner.clean(record.rawText, promptID: retranscribePromptID)
+
+                var updated = record
+                updated.cleanedText = cleanedText
+                updated.cleanupFailed = false
+                updated.cleanupFailureReason = nil
+                historyStore.updateRecord(updated)
+
+                await MainActor.run {
+                    retranscribeProgress = .done(cleanedText)
+                }
+            } catch {
+                var updated = record
+                updated.cleanupFailed = true
+                updated.cleanupFailureReason = error.localizedDescription
+                historyStore.updateRecord(updated)
+
+                await MainActor.run {
+                    retranscribeProgress = .failed("AI cleanup failed: \(error.localizedDescription)")
                 }
             }
         }
