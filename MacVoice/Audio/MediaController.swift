@@ -24,11 +24,12 @@ final class MediaController {
         ),
     ]
 
+    @MainActor
     func pauseMedia() async {
         pausedApp = nil
         pausedWithMediaKey = false
 
-        if isSpotifyRunning(), isSpotifyPlaying() {
+        if isSpotifyPlaying() {
             pressPlayPauseKey()
             pausedApp = "Spotify"
             pausedWithMediaKey = true

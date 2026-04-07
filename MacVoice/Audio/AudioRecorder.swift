@@ -44,7 +44,7 @@ final class AudioRecorder {
     var onEngineRebuilt: (() -> Void)?
 
     private var lastSpeechTime: Date = .now
-    private let silenceLevelThreshold: Float = -40.0 // dB
+    private let silenceLevelThreshold: Float = -30.0 // dB — tolerant of background noise
 
     init(settings: Settings) {
         self.settings = settings

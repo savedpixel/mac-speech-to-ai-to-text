@@ -33,6 +33,7 @@ final class Settings {
         static let copyAutoDismissDelay = "copyAutoDismissDelay"
         static let soundPreset = "soundPreset"
         static let beepVolume = "beepVolume"
+        static let beepEnabled = "beepEnabled"
         static let selectedMicrophoneID = "selectedMicrophoneID"
         static let keepMicrophoneConnected = "keepMicrophoneConnected"
     }
@@ -247,6 +248,10 @@ final class Settings {
         didSet { defaults.set(beepVolume, forKey: Key.beepVolume) }
     }
 
+    var beepEnabled: Bool {
+        didSet { defaults.set(beepEnabled, forKey: Key.beepEnabled) }
+    }
+
     var selectedMicrophoneID: String {
         didSet { 
             defaults.set(selectedMicrophoneID, forKey: Key.selectedMicrophoneID) 
@@ -296,6 +301,7 @@ final class Settings {
             Key.copyAutoDismissDelay: 0,
             Key.soundPreset: Self.defaultSoundPresetRawValue,
             Key.beepVolume: 0.7,
+            Key.beepEnabled: true,
             Key.selectedMicrophoneID: "",
             Key.keepMicrophoneConnected: false,
         ])
@@ -319,6 +325,7 @@ final class Settings {
         self.autoInsertEnabled = defs.bool(forKey: Key.autoInsertEnabled)
         self.soundPreset = Self.sanitizeSoundPreset(defs.string(forKey: Key.soundPreset))
         self.beepVolume = defs.object(forKey: Key.beepVolume) != nil ? defs.double(forKey: Key.beepVolume) : 0.7
+        self.beepEnabled = defs.object(forKey: Key.beepEnabled) != nil ? defs.bool(forKey: Key.beepEnabled) : true
         let storedMicrophoneID = defs.string(forKey: Key.selectedMicrophoneID) ?? ""
         if storedMicrophoneID.isEmpty {
             self.selectedMicrophoneID = ""
