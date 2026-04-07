@@ -25,6 +25,9 @@ final class PipelineCoordinator {
     private var activePromptID: UUID?
     /// Pending work item for auto-dismiss after copy.
     private var copyDismissWorkItem: DispatchWorkItem?
+    private var isAwaitingInsertPhraseBeforeDisconnect = false
+    /// ID of the record associated with the current pipeline run (for retry).
+    private var currentRecordID: UUID?
 
     /// Callback when overlay should show/hide
     var onOverlayShow: (() -> Void)?
@@ -71,6 +74,11 @@ final class PipelineCoordinator {
         audioRecorder.onSilenceDetected = { [weak self] duration in
             guard let self, self.state == .recording, self.settings.sendPhraseEnabled else { return }
             self.sendPhraseDetector.checkSilenceAfterPhrase(silenceDuration: duration)
+        }
+
+        audioRecorder.onSpeechDetected = { [weak self] in
+            guard let self, self.state == .recording, self.settings.sendPhraseEnabled else { return }
+            self.sendPhraseDetector.resetPendingConfirmationIfNeeded()
         }
 
         // Restart send phrase detector when engine rebuilds (format change)
@@ -157,7 +165,7 @@ final class PipelineCoordinator {
               }
         } catch {
             logger.error("Failed to start recording: \(error.localizedDescription)")
-            cleanup()
+            cleanup(forceStopInsertListener: true)
             transition(to: .error("Recording failed: \(error.localizedDescription)"))
         }
     }
@@ -169,20 +177,27 @@ final class PipelineCoordinator {
         // Stop recording & send phrase detector
         sendPhraseDetector.stopMonitoring()
         guard let url = audioRecorder.stopRecording() else {
-            cleanup()
+            cleanup(forceStopInsertListener: true)
             transition(to: .error("No recording file"))
             return
         }
+
+        await audioSignalPlayer.playRecordingFinishedBeep()
 
         // Copy audio to history BEFORE transcription so it's never lost
         let audioFileName = historyStore.copyAudioFile(from: url)
 
         // Save a pending record immediately — survives force-quit during transcription
-        var pendingRecord = TranscriptionRecord(rawText: "", audioFileName: audioFileName, transcriptionStatus: .pending, whisperModel: settings.whisperModel)
+        let pendingRecord = TranscriptionRecord(rawText: "", audioFileName: audioFileName, transcriptionStatus: .pending, whisperModel: settings.whisperModel)
         historyStore.addRecord(pendingRecord)
-        let pendingID = pendingRecord.id
+        currentRecordID = pendingRecord.id
 
         transition(to: .transcribing)
+
+        if settings.autoResumeMedia {
+            mediaController.resumeMedia()
+            logger.info("Resumed media at transcription start")
+        }
 
         do {
             let text = try await transcriptionEngine.transcribe(audioFileURL: url)
@@ -225,6 +240,8 @@ final class PipelineCoordinator {
             updated.rawText = rawText
             updated.cleanedText = cleanedText
             updated.transcriptionStatus = .success
+            updated.cleanupFailed = cleanupFailed
+            updated.cleanupFailureReason = cleanupFailureReason
             historyStore.updateRecord(updated)
 
             transition(to: .completed(result))
@@ -243,7 +260,7 @@ final class PipelineCoordinator {
             failedRecord.transcriptionStatus = .failed(error.localizedDescription)
             historyStore.updateRecord(failedRecord)
 
-            cleanup()
+            cleanup(forceStopInsertListener: true)
             transition(to: .error("Transcription failed: \(error.localizedDescription)"))
         }
 
@@ -281,8 +298,52 @@ final class PipelineCoordinator {
         dismiss()
     }
 
+    /// Retry AI cleanup on the current completed result's raw text.
+    func retryCleanup() {
+        guard case .completed(let result) = state else { return }
+        let rawText = result.rawText
+        logger.info("Retrying AI cleanup")
+        transition(to: .cleaning)
+
+        Task { @MainActor in
+            do {
+                let cleanedText = try await transcriptionCleaner.clean(rawText, promptID: activePromptID)
+                await audioSignalPlayer.playAIDoneBeep()
+
+                let newResult = TranscriptionResult(
+                    rawText: rawText,
+                    cleanedText: cleanedText,
+                    cleanupFailed: false,
+                    cleanupFailureReason: nil
+                )
+
+                // Update the saved record
+                if let recordID = currentRecordID,
+                   let record = historyStore.records.first(where: { $0.id == recordID }) {
+                    var updated = record
+                    updated.cleanedText = cleanedText
+                    updated.cleanupFailed = false
+                    updated.cleanupFailureReason = nil
+                    historyStore.updateRecord(updated)
+                }
+
+                transition(to: .completed(newResult))
+                logger.info("Retry cleanup succeeded")
+            } catch {
+                logger.warning("Retry cleanup failed: \(error.localizedDescription)")
+                let newResult = TranscriptionResult(
+                    rawText: rawText,
+                    cleanedText: nil,
+                    cleanupFailed: true,
+                    cleanupFailureReason: error.localizedDescription
+                )
+                transition(to: .completed(newResult))
+            }
+        }
+    }
+
     func dismiss() {
-        cleanup()
+        cleanup(forceStopInsertListener: true)
         transition(to: .idle)
         onOverlayDismiss?()
     }
@@ -299,7 +360,9 @@ final class PipelineCoordinator {
         logger.info("Pipeline: \(oldState.displayName) → \(newState.displayName)")
 
         // Start insert phrase listener when completed; stop it otherwise
-        if case .completed = newState, settings.keepMicrophoneConnected, !settings.micDisconnected {
+        if case .completed = newState,
+           shouldListenForInsertPhraseAfterCompletion {
+            isAwaitingInsertPhraseBeforeDisconnect = !settings.keepMicrophoneConnected
             insertPhraseListener?.startListening()
         } else if isListeningForInsert {
             insertPhraseListener?.stopListening()
@@ -319,16 +382,38 @@ final class PipelineCoordinator {
         insertPhraseListener?.isListening ?? false
     }
 
-    private func cleanup() {
+    private var shouldListenForInsertPhraseAfterCompletion: Bool {
+        settings.insertPhraseEnabled &&
+        !settings.autoInsertEnabled &&
+        permissionManager.microphoneGranted
+    }
+
+    private func cleanup(forceStopInsertListener: Bool = false) {
         sendPhraseDetector.stopMonitoring()
         _ = audioRecorder.stopRecording()
         textInserter.reset()
-        insertPhraseListener?.stopListening()
+
+        let keepInsertListenerAlive =
+            !forceStopInsertListener &&
+            {
+                if case .completed = state { return true }
+                return false
+            }() &&
+            isAwaitingInsertPhraseBeforeDisconnect &&
+            shouldListenForInsertPhraseAfterCompletion
+
+        if !keepInsertListenerAlive {
+            insertPhraseListener?.stopListening()
+            isAwaitingInsertPhraseBeforeDisconnect = false
+        }
+
         copyDismissWorkItem?.cancel()
         copyDismissWorkItem = nil
         activePromptID = nil
 
-        if !settings.keepMicrophoneConnected && !settings.micDisconnected {
+        if !settings.keepMicrophoneConnected &&
+            !settings.micDisconnected &&
+            !keepInsertListenerAlive {
             settings.micDisconnected = true
         }
 

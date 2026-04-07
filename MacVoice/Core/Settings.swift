@@ -56,6 +56,17 @@ final class Settings {
         }
     }
 
+    static var defaultSoundPresetRawValue: String {
+        SoundPreset.allCases.first?.rawValue ?? SoundPreset.electronic.rawValue
+    }
+
+    static func sanitizeSoundPreset(_ rawValue: String?) -> String {
+        guard let rawValue, SoundPreset(rawValue: rawValue) != nil else {
+            return defaultSoundPresetRawValue
+        }
+        return rawValue
+    }
+
     // MARK: - Properties
 
     var sendPhrase: String {
@@ -222,7 +233,14 @@ final class Settings {
     }
 
     var soundPreset: String {
-        didSet { defaults.set(soundPreset, forKey: Key.soundPreset) }
+        didSet {
+            let sanitized = Self.sanitizeSoundPreset(soundPreset)
+            if sanitized != soundPreset {
+                soundPreset = sanitized
+                return
+            }
+            defaults.set(sanitized, forKey: Key.soundPreset)
+        }
     }
 
     var beepVolume: Double {
@@ -276,7 +294,7 @@ final class Settings {
             Key.insertPhraseEnabled: true,
             Key.keepOverlayOpenOnCopy: false,
             Key.copyAutoDismissDelay: 0,
-            Key.soundPreset: SoundPreset.metallic.rawValue,
+            Key.soundPreset: Self.defaultSoundPresetRawValue,
             Key.beepVolume: 0.7,
             Key.selectedMicrophoneID: "",
             Key.keepMicrophoneConnected: false,
@@ -299,9 +317,15 @@ final class Settings {
         self.autoDeleteDays = defs.integer(forKey: Key.autoDeleteDays)
         self.sendPhraseEnabled = defs.bool(forKey: Key.sendPhraseEnabled)
         self.autoInsertEnabled = defs.bool(forKey: Key.autoInsertEnabled)
-        self.soundPreset = defs.string(forKey: Key.soundPreset) ?? SoundPreset.metallic.rawValue
+        self.soundPreset = Self.sanitizeSoundPreset(defs.string(forKey: Key.soundPreset))
         self.beepVolume = defs.object(forKey: Key.beepVolume) != nil ? defs.double(forKey: Key.beepVolume) : 0.7
-        self.selectedMicrophoneID = defs.string(forKey: Key.selectedMicrophoneID) ?? ""
+        let storedMicrophoneID = defs.string(forKey: Key.selectedMicrophoneID) ?? ""
+        if storedMicrophoneID.isEmpty {
+            self.selectedMicrophoneID = ""
+        } else {
+            let availableMicrophoneIDs = Set(AudioRecorder.availableMicrophones().map(\.id))
+            self.selectedMicrophoneID = availableMicrophoneIDs.contains(storedMicrophoneID) ? storedMicrophoneID : ""
+        }
 
         // Load new settings
         self.insertPhrase = defs.string(forKey: Key.insertPhrase) ?? "Insert"
@@ -359,6 +383,8 @@ final class Settings {
             self.wakePhraseEnabled = false
             defs.set(false, forKey: Key.wakePhraseEnabled)
         }
+
+        defs.set(self.soundPreset, forKey: Key.soundPreset)
 
         logger.debug("Settings loaded")
     }

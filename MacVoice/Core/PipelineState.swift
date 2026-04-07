@@ -77,6 +77,7 @@ enum PipelineState: Equatable {
         case (.cleaning, .completed): return true
         case (.cleaning, .error): return true
         case (.completed, .idle): return true
+        case (.completed, .cleaning): return true  // Retry cleanup
         case (.error, .idle): return true
         // Allow cancellation from any active state
         case (_, .idle) where self.isActive: return true

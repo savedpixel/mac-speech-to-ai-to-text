@@ -3,6 +3,7 @@ import SwiftUI
 struct RecordingOverlayView: View {
     var pipelineCoordinator: PipelineCoordinator
     var audioRecorder: AudioRecorder
+    @State private var copiedOverlay = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -33,7 +34,7 @@ struct RecordingOverlayView: View {
             }
         }
         .padding(20)
-        .frame(minWidth: 320, maxWidth: 320, minHeight: 180)
+        .frame(minWidth: 520, maxWidth: 520, minHeight: 340)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
@@ -52,13 +53,35 @@ struct RecordingOverlayView: View {
     }
 
     private var recordingContent: some View {
-        VStack(spacing: 12) {
-            AudioWaveformView(audioLevel: audioRecorder.currentAudioLevel)
-                .frame(height: 60)
+        VStack(spacing: 0) {
+            // Main waveform area
+            AudioWaveformView(
+                audioRecorder: audioRecorder
+            )
+            .frame(height: 180)
+            .background(
+                Color(red: 0.23, green: 0.23, blue: 0.25)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8))
 
-            Text("Listening…")
-                .font(.headline)
-                .foregroundStyle(.secondary)
+            Spacer().frame(height: 10)
+
+            // Mini overview bar
+            MiniWaveformBar(
+                audioRecorder: audioRecorder
+            )
+            .frame(height: 32)
+            .background(Color(red: 0.23, green: 0.23, blue: 0.25))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            Spacer().frame(height: 14)
+
+            // Time counter
+            RecordingTimeCounter(audioRecorder: audioRecorder)
+                .font(.system(size: 32, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(red: 1.0, green: 0.36, blue: 0.36))
+
+            Spacer().frame(height: 14)
 
             HStack(spacing: 10) {
                 Button("Cancel") {
@@ -111,6 +134,11 @@ struct RecordingOverlayView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
+                Button("Retry Cleanup") {
+                    pipelineCoordinator.retryCleanup()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             } else if result.rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Label("No speech detected", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
@@ -130,8 +158,10 @@ struct RecordingOverlayView: View {
             .frame(maxHeight: 150)
 
             HStack(spacing: 10) {
-                Button("Copy") {
+                Button(copiedOverlay ? "Copied!" : "Copy") {
                     pipelineCoordinator.copyResult()
+                    copiedOverlay = true
+                    Task { try? await Task.sleep(for: .seconds(1.5)); copiedOverlay = false }
                 }
                 .buttonStyle(.bordered)
 

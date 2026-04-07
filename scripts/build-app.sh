@@ -8,12 +8,44 @@ APP_NAME="Mac Voice"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 BUNDLE_ID="com.macvoice.app"
 SIGNING_IDENTITY="REDACTED_SIGNING_IDENTITY"
+EXECUTABLE_NAME="MacVoice"
+
+quit_running_app() {
+    echo "🛑 Closing running app if needed..."
+
+    osascript <<EOF >/dev/null 2>&1 || true
+tell application "System Events"
+    if exists application process "$APP_NAME" then
+        tell application id "$BUNDLE_ID" to quit
+    end if
+end tell
+EOF
+
+    for _ in {1..20}; do
+        if ! pgrep -x "$APP_NAME" >/dev/null 2>&1 && ! pgrep -x "$EXECUTABLE_NAME" >/dev/null 2>&1; then
+            return
+        fi
+        sleep 0.5
+    done
+
+    echo "⚠️  App did not quit in time, forcing shutdown..."
+    pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+    pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
+    sleep 1
+}
+
+open_built_app() {
+    echo "🚀 Opening app..."
+    open "$APP_BUNDLE"
+}
+
+quit_running_app
 
 echo "🔨 Building Mac Voice..."
 cd "$PROJECT_DIR"
 swift build -c release 2>&1
 
-EXECUTABLE=$(swift build -c release --show-bin-path)/MacVoice
+EXECUTABLE=$(swift build -c release --show-bin-path)/$EXECUTABLE_NAME
 
 if [ ! -f "$EXECUTABLE" ]; then
     echo "❌ Build failed — executable not found"
@@ -100,8 +132,8 @@ echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 
 # Copy beep sound files
 echo "🔊 Copying beep sounds..."
-if [ -d "$PROJECT_DIR/beeps" ]; then
-    cp "$PROJECT_DIR/beeps/"*.wav "$APP_BUNDLE/Contents/Resources/"
+if [ -d "$PROJECT_DIR/MacVoice/Audio/Sounds" ]; then
+    cp "$PROJECT_DIR/MacVoice/Audio/Sounds/"*.wav "$APP_BUNDLE/Contents/Resources/"
 fi
 
 # Create entitlements
@@ -133,5 +165,6 @@ codesign --verify --verbose "$APP_BUNDLE" 2>&1 && echo "✅ Signature valid" || 
 echo ""
 echo "✅ Built and signed: $APP_BUNDLE"
 echo ""
-echo "To run:  open \"$APP_BUNDLE\""
+open_built_app
+echo "Opened: \"$APP_BUNDLE\""
 echo "To dock: drag \"$APP_BUNDLE\" to your Dock"

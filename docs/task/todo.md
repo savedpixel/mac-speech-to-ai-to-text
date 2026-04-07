@@ -1,8 +1,24 @@
 # Mac Voice — Active Tasks
 
+<!-- Updated: 2026-04-02 -->
+
 <!-- Add task items here as checkboxes. Remove completed items and log them in docs/task/logs/. -->
 
 ## Active
+
+### Beep Reliability, History Failure Handling, Copy Feedback, Folder Display & Send Phrase Fix
+> Plan: `docs/task/planning/draft/2026-04-07-beep-reliability-history-polish.md`
+
+- [ ] Step 1: Fix audio session for reliable beep playback
+- [ ] Step 2: Add `cleanupFailed` and `cleanupFailureReason` to TranscriptionRecord
+- [ ] Step 3: Persist cleanup failure state in PipelineCoordinator
+- [ ] Step 4: Show cleanup-failed records in "Failed" section
+- [ ] Step 5: Add "Retry Cleanup" button to RecordingOverlayView
+- [ ] Step 6: Separate re-transcribe, re-clean, and combined actions in HistoryDetailView
+- [ ] Step 7: Add "Copied" feedback to all copy buttons
+- [ ] Step 8: Fix folder display in HistoryDetailView
+- [ ] Step 9: Fix send phrase false-positive auto-send
+- [ ] Step 10: Build, test, and verify all features
 
 ### Microphone Connection Mode & Spotify Shortcut Pause
 
@@ -150,5 +166,19 @@
 ---
 
 ## Completed
+
+### Recording Overlay Waveform, Sound Defaults, Send/Insert Trigger Fixes (2026-04-02)
+
+- [x] Step 1: Replace the overlay with a PCM-driven centered audio waveform and live timer updates
+- [x] Step 2: Default notification sound to the first preset and sanitize invalid saved values
+- [x] Step 3: Play an acknowledgement sound when recording is finished by send phrase or Done
+- [x] Step 4: Restore insert phrase listening so it can trigger insertion after transcription
+- [x] Step 5: Build, relaunch, and user-verify the overlay behavior
+
+### Resume Media When Transcription Starts (2026-03-30)
+
+- [x] Step 1: Trace current media pause/resume timing in the pipeline
+- [x] Step 2: Resume media when recording stops and transcription begins
+- [x] Step 3: Build and verify playback no longer waits for copy/insert
 
 ### Voice Recordings & Model Management (2026-03-28)

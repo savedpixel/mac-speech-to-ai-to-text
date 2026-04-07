@@ -2,7 +2,7 @@
 
 <!-- macOS menu bar + Dock app with main window, recording overlay, and preferences. -->
 
-<!-- Updated: 2026-03-30 -->
+<!-- Updated: 2026-04-02 -->
 
 ---
 
@@ -19,12 +19,18 @@
 - **Position:** Centered on screen
 - **Styling:** `.ultraThinMaterial` background, rounded corners
 - **States:**
-  - Recording: Live audio waveform + "Listening…" + Cancel
+  - Recording: Live single-line PCM waveform, running timer, Cancel, and Done
   - Transcribing: Spinner + "Transcribing…"
   - Cleaning: Spinner + "Cleaning up via AI…"
   - Completed: Text display + Copy/Insert/Dismiss buttons (stays until user acts)
   - Error: Error message + Dismiss
 - **Non-activating:** Does not steal focus from the active text field
+
+### Recording Overlay Notes
+
+- The waveform is driven from live microphone sample history instead of dB-only level bars
+- Silence stays visually centered; speech moves the line above and below the midpoint like a native audio waveform
+- The recording timer is shown directly beneath the waveform and updates continuously during capture
 
 ## Main Window
 
@@ -56,3 +62,4 @@
 - Menu bar acts as quick-access companion to the full app
 - Overlay lifecycle tied to pipeline — appears on activation, disappears on user action
 - Insert action uses cursor position captured at recording start
+- Finishing a recording by send phrase or `Done` now plays an immediate acknowledgement sound before transcription starts

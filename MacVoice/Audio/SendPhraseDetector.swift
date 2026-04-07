@@ -70,6 +70,13 @@ final class SendPhraseDetector {
         recognitionRequest?.append(buffer)
     }
 
+    /// If the user continues speaking after the phrase, require a fresh phrase detection.
+    func resetPendingConfirmationIfNeeded() {
+        guard phraseDetectedTime != nil else { return }
+        logger.info("Speech resumed after send phrase — resetting confirmation")
+        phraseDetectedTime = nil
+    }
+
     /// Match the send phrase flexibly — "ok" matches "okay", "OK", etc.
     private func matchesSendPhrase(_ text: String) -> Bool {
         let phrase = settings.sendPhrase.lowercased()

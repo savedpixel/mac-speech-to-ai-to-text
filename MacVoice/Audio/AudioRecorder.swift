@@ -11,11 +11,21 @@ struct MicrophoneOption: Identifiable, Hashable {
 @Observable
 final class AudioRecorder {
     private let logger = Logger(subsystem: "com.macvoice.app", category: "audio")
+    private let maxWaveformSamples = 720
+    private let waveformFramesPerSecond: Double = 18
+    private var waveformFramesPerBucket: Int = 2450
+    private var waveformAccumulatedPeak: Float = 0
+    private var waveformAccumulatedPower: Float = 0
+    private var waveformAccumulatedFrameCount = 0
+    private var lastWaveformAmplitude: Float = 0
 
     private var audioEngine: AVAudioEngine?
     private var audioFile: AVAudioFile?
     private(set) var isRecording = false
-    private(set) var currentAudioLevel: Float = 0.0
+    private(set) var currentAudioLevel: Float = -160
+    private(set) var recordingStartDate: Date = .now
+    private(set) var waveformSampleInterval: TimeInterval = 1.0 / 18.0
+    private(set) var waveformSamples: [Float] = []
     private var recordingURL: URL?
     private var configObserver: Any?
     private let settings: Settings
@@ -26,6 +36,9 @@ final class AudioRecorder {
 
     /// Callback to forward audio buffers to other consumers (e.g. send phrase detector)
     var onAudioBuffer: ((AVAudioPCMBuffer) -> Void)?
+
+    /// Callback fired when speech resumes after a silent period.
+    var onSpeechDetected: (() -> Void)?
 
     /// Callback fired after the audio engine is rebuilt due to config change
     var onEngineRebuilt: (() -> Void)?
@@ -56,16 +69,29 @@ final class AudioRecorder {
         // Pre-trigger BT audio route change by briefly touching the input node.
         // This causes the A2DP→HFP switch to happen before we install our real tap,
         // preventing the config-change rebuild that causes the mic indicator to flash.
-        let probe = AVAudioEngine()
-        let _ = probe.inputNode.outputFormat(forBus: 0)
-        probe.prepare()
-        try probe.start()
-        probe.stop()
-
-        // Wait for the BT route to settle
-        try await Task.sleep(for: .milliseconds(800))
+        // Non-fatal: if the probe fails (e.g. mic contention from wake phrase teardown),
+        // we skip it and proceed directly — BT users may see a brief mic flash.
+        do {
+            let probe = AVAudioEngine()
+            if !settings.selectedMicrophoneID.isEmpty {
+                _ = probe.inputNode.applyPreferredInputDevice(uid: settings.selectedMicrophoneID)
+            }
+            let _ = probe.inputNode.outputFormat(forBus: 0)
+            probe.prepare()
+            try probe.start()
+            probe.stop()
+            // Wait for the BT route to settle
+            try await Task.sleep(for: .milliseconds(800))
+        } catch {
+            logger.info("BT probe skipped (non-fatal): \(error.localizedDescription)")
+            // Brief settling delay even without probe
+            try await Task.sleep(for: .milliseconds(200))
+        }
 
         try setupEngine(fileURL: url)
+        recordingStartDate = .now
+        waveformSamples.removeAll(keepingCapacity: true)
+        resetWaveformState()
         isRecording = true
 
         logger.info("Recording started: \(url.lastPathComponent)")
@@ -77,6 +103,8 @@ final class AudioRecorder {
         audioFile = nil
         isRecording = false
         currentAudioLevel = 0.0
+        waveformSamples.removeAll(keepingCapacity: true)
+        resetWaveformState()
 
         logger.info("Recording stopped")
         return recordingURL
@@ -93,6 +121,8 @@ final class AudioRecorder {
         }
 
         let format = inputNode.outputFormat(forBus: 0)
+        waveformFramesPerBucket = max(1, Int(format.sampleRate / waveformFramesPerSecond))
+        waveformSampleInterval = Double(waveformFramesPerBucket) / format.sampleRate
 
         logger.debug("Audio format: rate=\(format.sampleRate, privacy: .public), ch=\(format.channelCount, privacy: .public)")
 
@@ -220,6 +250,8 @@ final class AudioRecorder {
         // Forward buffer to consumers
         onAudioBuffer?(buffer)
 
+        updateWaveformSamples(from: buffer)
+
         // Calculate RMS level
         guard let channelData = buffer.floatChannelData?[0] else { return }
         let frameCount = Int(buffer.frameLength)
@@ -234,10 +266,56 @@ final class AudioRecorder {
 
         // Silence detection
         if db > silenceLevelThreshold {
+            onSpeechDetected?()
             lastSpeechTime = .now
         } else {
             let silenceDuration = Date.now.timeIntervalSince(lastSpeechTime)
             onSilenceDetected?(silenceDuration)
         }
+    }
+
+    private func updateWaveformSamples(from buffer: AVAudioPCMBuffer) {
+        guard let channelData = buffer.floatChannelData?[0] else { return }
+
+        let frameCount = Int(buffer.frameLength)
+        guard frameCount > 0 else { return }
+
+        var peak: Float = 0
+        var powerSum: Float = 0
+        for index in 0..<frameCount {
+            let magnitude = abs(channelData[index])
+            peak = max(peak, magnitude)
+            powerSum += magnitude * magnitude
+        }
+
+        waveformAccumulatedPeak = max(waveformAccumulatedPeak, peak)
+        waveformAccumulatedPower += powerSum
+        waveformAccumulatedFrameCount += frameCount
+
+        guard waveformAccumulatedFrameCount >= waveformFramesPerBucket else { return }
+
+        let rms = sqrt(waveformAccumulatedPower / Float(max(1, waveformAccumulatedFrameCount)))
+        let blendedAmplitude = max(rms * 0.95, waveformAccumulatedPeak * 0.38)
+        let gatedAmplitude = max(0, blendedAmplitude - 0.012)
+        let normalizedAmplitude = min(1, pow(gatedAmplitude * 4.6, 1.55))
+        let smoothing: Float = normalizedAmplitude > lastWaveformAmplitude ? 0.44 : 0.16
+        let smoothedAmplitude = lastWaveformAmplitude + (normalizedAmplitude - lastWaveformAmplitude) * smoothing
+        lastWaveformAmplitude = smoothedAmplitude
+
+        waveformSamples.append(smoothedAmplitude)
+        if waveformSamples.count > maxWaveformSamples {
+            waveformSamples.removeFirst(waveformSamples.count - maxWaveformSamples)
+        }
+
+        waveformAccumulatedPeak = 0
+        waveformAccumulatedPower = 0
+        waveformAccumulatedFrameCount = 0
+    }
+
+    private func resetWaveformState() {
+        waveformAccumulatedPeak = 0
+        waveformAccumulatedPower = 0
+        waveformAccumulatedFrameCount = 0
+        lastWaveformAmplitude = 0
     }
 }

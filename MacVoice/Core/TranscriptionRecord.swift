@@ -26,6 +26,8 @@ struct TranscriptionRecord: Codable, Identifiable, Hashable {
     var transcriptionStatus: TranscriptionStatus
     var whisperModel: String?
     var retranscriptionHistory: [RetranscriptionEntry]?
+    var cleanupFailed: Bool
+    var cleanupFailureReason: String?
 
     init(
         id: UUID = UUID(),
@@ -38,7 +40,9 @@ struct TranscriptionRecord: Codable, Identifiable, Hashable {
         isArchived: Bool = false,
         transcriptionStatus: TranscriptionStatus = .success,
         whisperModel: String? = nil,
-        retranscriptionHistory: [RetranscriptionEntry]? = nil
+        retranscriptionHistory: [RetranscriptionEntry]? = nil,
+        cleanupFailed: Bool = false,
+        cleanupFailureReason: String? = nil
     ) {
         self.id = id
         self.date = date
@@ -51,6 +55,8 @@ struct TranscriptionRecord: Codable, Identifiable, Hashable {
         self.transcriptionStatus = transcriptionStatus
         self.whisperModel = whisperModel
         self.retranscriptionHistory = retranscriptionHistory
+        self.cleanupFailed = cleanupFailed
+        self.cleanupFailureReason = cleanupFailureReason
     }
 
     // Backward-compatible decoding — new fields default gracefully
@@ -67,5 +73,7 @@ struct TranscriptionRecord: Codable, Identifiable, Hashable {
         transcriptionStatus = try container.decodeIfPresent(TranscriptionStatus.self, forKey: .transcriptionStatus) ?? .success
         whisperModel = try container.decodeIfPresent(String.self, forKey: .whisperModel)
         retranscriptionHistory = try container.decodeIfPresent([RetranscriptionEntry].self, forKey: .retranscriptionHistory)
+        cleanupFailed = try container.decodeIfPresent(Bool.self, forKey: .cleanupFailed) ?? false
+        cleanupFailureReason = try container.decodeIfPresent(String.self, forKey: .cleanupFailureReason)
     }
 }

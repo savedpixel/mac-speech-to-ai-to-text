@@ -89,11 +89,37 @@ struct PromptEditorView: View {
                         .font(.caption)
                         .foregroundStyle(.tint)
                 } else {
-                    Button("Set as Default") {
-                        promptStore.selectedPromptID = prompt.id
+                    HStack(spacing: 8) {
+                        Button("Set as Default") {
+                            promptStore.selectedPromptID = prompt.id
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+
+                        if !prompt.isBuiltIn {
+                            Button("Save") {
+                                var updated = prompt
+                                updated.name = name
+                                updated.systemPrompt = systemPrompt
+                                promptStore.update(updated)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .disabled(name == prompt.name && systemPrompt == prompt.systemPrompt)
+                        }
                     }
-                    .buttonStyle(.bordered)
+                }
+
+                if prompt.id == promptStore.selectedPromptID, !prompt.isBuiltIn {
+                    Button("Save") {
+                        var updated = prompt
+                        updated.name = name
+                        updated.systemPrompt = systemPrompt
+                        promptStore.update(updated)
+                    }
+                    .buttonStyle(.borderedProminent)
                     .controlSize(.small)
+                    .disabled(name == prompt.name && systemPrompt == prompt.systemPrompt)
                 }
             }
 
@@ -109,26 +135,14 @@ struct PromptEditorView: View {
                 .font(.body.monospaced())
                 .scrollContentBackground(.hidden)
                 .padding(8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .frame(minHeight: 260)
                 .background(.quaternary)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .disabled(prompt.isBuiltIn)
-
-            if !prompt.isBuiltIn {
-                HStack {
-                    Spacer()
-                    Button("Save") {
-                        var updated = prompt
-                        updated.name = name
-                        updated.systemPrompt = systemPrompt
-                        promptStore.update(updated)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(name == prompt.name && systemPrompt == prompt.systemPrompt)
-                }
-            }
         }
         .padding()
-        .frame(minWidth: 350)
+        .frame(minWidth: 350, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear { loadPrompt() }
         .onChange(of: prompt.id) { _, _ in loadPrompt() }
     }
