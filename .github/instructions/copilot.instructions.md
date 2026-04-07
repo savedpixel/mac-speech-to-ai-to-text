@@ -18,7 +18,7 @@ Mac Voice is a macOS menu bar application built in Swift that provides system-wi
 - **Language:** Swift 5.9+
 - **UI Framework:** SwiftUI (preferences window) · AppKit (NSStatusItem menu bar)
 - **Audio:** AVAudioEngine · AVAudioRecorder · AVAudioSession
-- **Transcription:** whisper.cpp (or WhisperKit) — local on-device Whisper inference
+- **Transcription:** WhisperKit (v0.9+) — local on-device Whisper inference
 - **Input:** CGEvent (global shortcuts, key simulation) · Accessibility API (AXUIElement)
 - **Speech Detection:** Speech framework (wake phrase) · Audio level monitoring (silence detection)
 - **Persistence:** UserDefaults / @AppStorage
@@ -74,9 +74,9 @@ During iterative chat sessions, **implement changes immediately** but **defer** 
    - **a. Agent Self-Evaluation Gate** — *"Is this the best solution?"* If NO, re-implement.
    - **b. Visual Verification Gate** — If UI affected, verify with browser/Xcode preview. If purely back-end, auto-passes.
    - **c. User Verification Gate** — Summarize changes + verification. Ask user to verify. Wait for response.
-   - **d. Scenario Evidence Rule** — All behavior-path scenarios must be executed end-to-end.
+   - **d. Scenario Evidence Rule (MANDATORY)** — All behavior-path scenarios must be executed end-to-end. **Test Fixture Rule:** If a scenario requires specific data or configuration that no existing page/view/route provides, you MUST create a temporary test fixture to exercise it — "nothing currently triggers this path" is NEVER a valid excuse to skip verification. Clean up test fixtures after verification.
    - Trivial changes (typos, comments) may skip all gates.
-   - **Steps 1–7 are LOCKED until step 0 completes.**
+   - **CRITICAL: Steps 1–7 below are LOCKED until step 0 completes.** No documentation updates, no observation logging, no commits — nothing — until the user has verified or explicitly waived.
 1. **Log agent observations (BLOCKING GATE)** — Follow `agent-observations.instructions.md`.
 2. **Update the daily task log** — `docs/task/logs/YYYY-MM-DD.md`
 3. **Update affected documentation** — per `doc-sync.instructions.md`
@@ -93,14 +93,19 @@ During iterative chat sessions, **implement changes immediately** but **defer** 
 
 ## CRITICAL: Never Auto-Commit or Auto-Push
 
-You must **NEVER** commit or push without **explicit user approval**. When ready to commit:
-1. Summarize what changed
-2. Ask: "Ready to commit?"
-3. **Wait for yes** before `git commit`
-4. After committing, ask before pushing
-5. **Wait for explicit approval** before `git push`
+You must **NEVER** commit or push without **explicit user approval**. This applies to ALL branches, ALL tasks, ALL batch boundaries — no exceptions.
 
-When committing, follow **all** rules in `commit.prompt.md`.
+When you believe work is ready to commit:
+1. Tell the user what changed (brief summary)
+2. Present **3 numbered commit message options** (subject line only, concise → descriptive) so the user can pick by number (e.g., "yes, 2")
+3. Ask: "Ready to commit?" (or similar)
+4. **Wait for the user to say yes** before running any `git commit` command
+5. After committing, ask before pushing: "Committed. Ready to push to <branch>?"
+6. **Wait for explicit approval** before running `git push`
+
+When it's time to commit (after user approval), follow **all** the rules in `commit.prompt.md`. That file is the single source of truth for staging, commit message format, branch safety, and push rules.
+
+**The user decides when to commit — not you.** Completing a task, reaching a batch boundary, or finishing documentation does NOT authorize a commit. Only the user's explicit instruction does.
 
 ---
 
@@ -154,6 +159,7 @@ When working on files under `MacVoice/`, documentation sync rules apply via `doc
 | Executing a planned task | `.github/prompts/execute-plan.prompt.md` |
 | Generating a report | `.github/prompts/report.prompt.md` |
 | Committing and pushing changes | `.github/prompts/commit.prompt.md` |
+| Batch-committing all uncommitted changes | `.github/prompts/commit-all.prompt.md` |
 
 > **`.github/instructions/task.instructions.md` applies to EVERY task. Read it before starting ANY work.**
 
@@ -180,9 +186,21 @@ Follow the full task lifecycle in `task.instructions.md`:
 | --- | --- | --- | --- | --- | --- |
 ```
 
-**Categories:** `Audio` · `Transcription` · `Input` · `UI` · `Core` · `Permissions` · `Bug` · `Docs`
+**Column definitions:**
 
-**Types:** `Task` (single-scope) · `Sprint` (grouped multi-item work)
+- `Title` — Action-oriented, specific enough to be searchable
+- `Description` — Concise, outcome-focused (what changed, not implementation minutiae)
+- `Start Date` / `End Date` — `MM/DD/YYYY` format
+- `Category` — One of: `Audio` · `Transcription` · `Input` · `UI` · `Core` · `Permissions` · `Bug` · `Docs`
+- `Type` — `Task` (single-scope) or `Sprint` (grouped multi-item work)
+
+**Grouping guidelines:**
+
+- Prefer feature-focused consolidation over file-by-file rows
+- Group related same-scope sub-tasks into a single row when appropriate
+- Use `Sprint` type for rows that consolidate multiple related changes
+- Keep descriptions outcome-focused
+- Update the `> {n} tasks` counter in the header after adding rows
 
 ---
 

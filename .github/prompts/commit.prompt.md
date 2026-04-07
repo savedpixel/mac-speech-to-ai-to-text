@@ -59,6 +59,10 @@ Before committing, confirm that **ALL** required verification steps from the tas
    - **Never enumerate every single change**
    - End with `Files: <key files touched>`
 
+   ### Split vs Combine Rule
+
+   Combine changes in one commit when tightly related. Do NOT combine unrelated concerns.
+
    ### Quick Subject Rewrite Guide
 
    - `Updated audio stuff` → `feat(audio): add silence threshold detection`

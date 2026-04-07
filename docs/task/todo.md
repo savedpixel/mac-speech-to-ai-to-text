@@ -6,20 +6,6 @@
 
 ## Active
 
-### Beep Reliability, History Failure Handling, Copy Feedback, Folder Display & Send Phrase Fix
-> Plan: `docs/task/planning/draft/2026-04-07-beep-reliability-history-polish.md`
-
-- [ ] Step 1: Fix audio session for reliable beep playback
-- [ ] Step 2: Add `cleanupFailed` and `cleanupFailureReason` to TranscriptionRecord
-- [ ] Step 3: Persist cleanup failure state in PipelineCoordinator
-- [ ] Step 4: Show cleanup-failed records in "Failed" section
-- [ ] Step 5: Add "Retry Cleanup" button to RecordingOverlayView
-- [ ] Step 6: Separate re-transcribe, re-clean, and combined actions in HistoryDetailView
-- [ ] Step 7: Add "Copied" feedback to all copy buttons
-- [ ] Step 8: Fix folder display in HistoryDetailView
-- [ ] Step 9: Fix send phrase false-positive auto-send
-- [ ] Step 10: Build, test, and verify all features
-
 ### Microphone Connection Mode & Spotify Shortcut Pause
 
 - [ ] Add persistent setting for keeping the microphone connected or off by default
