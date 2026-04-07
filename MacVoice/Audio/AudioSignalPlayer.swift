@@ -2,12 +2,12 @@ import AppKit
 import os
 
 enum SoundPreset: String, CaseIterable, Codable {
-    case electronic
-    case high
-    case metallic
-    case metallicTiny = "metallic-tiny"
-    case doubleChime = "double-chime"
-    case double
+    case electronic = "beep-button-electronic"
+    case high = "beep-button-high"
+    case metallic = "digital-chirp"
+    case metallicTiny = "digital-ping"
+    case doubleChime = "digital-beep-chirp"
+    case double = "digital-beep-high"
 
     var displayName: String {
         switch self {
@@ -44,6 +44,11 @@ final class AudioSignalPlayer {
         logger.debug("Recording finished beep played")
     }
 
+    func playSendPhraseReadyBeep() async {
+        await playPreset()
+        logger.debug("Send phrase ready beep played")
+    }
+
     func playTranscriptionDoneBeep() async {
         await playPreset()
         logger.debug("Transcription done beep played")
@@ -59,7 +64,8 @@ final class AudioSignalPlayer {
     // MARK: - Playback
 
     @MainActor
-    private func playPreset() async {
+    private func playPreset(volumeScale: Float = 1.0) async {
+        guard settings.beepEnabled else { return }
         let preset = SoundPreset(rawValue: settings.soundPreset) ?? .metallic
         guard let url = Bundle.main.url(forResource: preset.fileName, withExtension: "wav") else {
             logger.warning("Beep sound file not found: \(preset.fileName).wav in \(Bundle.main.resourcePath ?? "nil")")
@@ -71,7 +77,7 @@ final class AudioSignalPlayer {
             return
         }
 
-        sound.volume = Float(settings.beepVolume)
+        sound.volume = Float(settings.beepVolume) * volumeScale
         sound.play()
 
         let durationNs = UInt64(sound.duration * 1_000_000_000) + 50_000_000

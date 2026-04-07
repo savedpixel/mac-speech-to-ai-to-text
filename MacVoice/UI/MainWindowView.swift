@@ -400,6 +400,8 @@ struct SettingsContentView: View {
 
     @ViewBuilder private var soundSection: some View {
         Section("Sound") {
+            Toggle("Enable Notification Sound", isOn: $settings.beepEnabled)
+
             HStack {
                 Picker("Notification Sound", selection: $settings.soundPreset) {
                     ForEach(SoundPreset.allCases, id: \.self) { preset in

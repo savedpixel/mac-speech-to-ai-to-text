@@ -89,10 +89,19 @@ final class PipelineCoordinator {
             self.sendPhraseDetector.startMonitoring()
         }
 
+        // Beep when silence threshold met — user can now say the send phrase
+        sendPhraseDetector.onSilenceReady = { [weak self] in
+            guard let self, self.state == .recording else { return }
+            Task { @MainActor in
+                await self.audioSignalPlayer.playSendPhraseReadyBeep()
+            }
+        }
+
         // When send phrase + silence confirmed → stop and deliver
         sendPhraseDetector.onSendConfirmed = { [weak self] in
             guard let self, self.state == .recording else { return }
             self.logger.info("Send phrase confirmed — delivering")
+
             Task { @MainActor [weak self] in
                 await self?.finalizePipeline()
             }
@@ -148,8 +157,13 @@ final class PipelineCoordinator {
 
         wakePhraseListener?.pauseListening()
         textInserter.captureActiveElement()
-        await mediaController.pauseMedia()
-        await audioSignalPlayer.playReadyBeep()
+
+        // Pause media in background — don't block recording startup
+        Task { await mediaController.pauseMedia() }
+
+        // Play beep without waiting for it to finish
+        Task { @MainActor in await audioSignalPlayer.playReadyBeep() }
+
         onOverlayShow?()
 
         // Stage 2: Record
@@ -184,6 +198,11 @@ final class PipelineCoordinator {
 
         await audioSignalPlayer.playRecordingFinishedBeep()
 
+        // Disconnect mic immediately — no need for it during transcription/cleaning
+        if !settings.keepMicrophoneConnected && !settings.micDisconnected {
+            settings.micDisconnected = true
+        }
+
         // Copy audio to history BEFORE transcription so it's never lost
         let audioFileName = historyStore.copyAudioFile(from: url)
 
@@ -193,11 +212,6 @@ final class PipelineCoordinator {
         currentRecordID = pendingRecord.id
 
         transition(to: .transcribing)
-
-        if settings.autoResumeMedia {
-            mediaController.resumeMedia()
-            logger.info("Resumed media at transcription start")
-        }
 
         do {
             let text = try await transcriptionEngine.transcribe(audioFileURL: url)
