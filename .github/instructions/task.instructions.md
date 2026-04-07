@@ -87,10 +87,11 @@ After the Self-Evaluation Gate passes:
    - **Explicitly waive** ("continue", "skip verification", "go ahead") → proceed.
 6. **Never assume your own checks are sufficient.**
 7. **Trivial changes** (typo fixes, comment edits) may skip all three gates.
-8. **Scenario Execution Rule (MANDATORY):** You may NOT claim "implementation/testing is complete" unless all required behavior-path scenarios were actually executed end-to-end.
+8. **Scenario Execution Rule (MANDATORY):** You may NOT claim "implementation/testing is complete" unless all required behavior-path scenarios were actually executed end-to-end. **Test Fixture Rule:** If a scenario requires specific data or configuration that no existing page/view/route provides, you MUST create a temporary test fixture to exercise it — "nothing currently triggers this path" is NEVER a valid excuse to skip verification. Clean up test fixtures after verification.
 9. **Automatic Scenario Coverage (MANDATORY):** Execute all materially relevant behavior-path scenarios implied by the change.
-10. **Mandatory Untested List:** In every verification summary, include an explicit `Not Tested` section. If nothing missing: `Not Tested: none.`
-11. **Mandatory User Reporting:** Any untested/blocked/failed scenario MUST be reported before docs/commit steps.
+10. **Completion language is gated by execution evidence.** If any scenario is untested, report incomplete.
+11. **Mandatory Untested List:** In every verification summary, include an explicit `Not Tested` section. If nothing missing: `Not Tested: none.`
+12. **Mandatory User Reporting:** Any untested/blocked/failed scenario MUST be reported before docs/commit steps.
 
 ### Blocker Protocol (CRITICAL — blocks commit)
 - If **any** required verification step cannot be completed, the work is **unverified**.
@@ -101,6 +102,7 @@ After the Self-Evaluation Gate passes:
   3. **Report the blocker clearly** to the user.
   4. **Leave changes staged but uncommitted.**
 - Never treat "docs updated and automated checks passed" as sufficient when the task includes runtime verification that was skipped.
+- Never log a blocker as an "anomaly" and then commit anyway.
 
 ---
 

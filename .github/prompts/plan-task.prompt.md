@@ -38,8 +38,30 @@ The user will describe a task, feature, bug fix, or refactor. **Their descriptio
 - Read the user's description carefully.
 - Search the codebase for current state of affected files.
 - Identify all files, functions, data structures, and dependencies.
-- Cross-reference code against documentation — note divergence in Assumptions.
-- If ambiguous, make a reasonable decision and document the assumption.
+- Cross-reference code against documentation — note divergence in Open Questions.
+- **Do NOT assume.** If something is ambiguous, add it to Open Questions (step 2.5).
+
+### 2.5. Question Gate (Iterative)
+
+Before writing the plan, you MUST identify any open questions about scope, approach, or constraints. This replaces silent assumptions.
+
+**Rules:**
+- Assign stable IDs to each question: Q1, Q2, Q3, … (never renumber across rounds)
+- Present questions as a numbered list with a brief recommended answer for each
+- Wait for the user to answer before proceeding to step 3
+- If the user's answers raise new questions, add them with the next available ID (e.g., Q4, Q5) and ask again
+- Repeat until zero open questions remain
+- Questions answered in earlier rounds move to the **Confirmed Inputs** section of the plan
+- **Once all questions are resolved:** update the plan file `Status` from `Questions Pending` to `Draft`
+
+**Question categories to consider:**
+- Inclusion/exclusion of optional features
+- Ambiguous scope boundaries
+- Technology or approach choices
+- Backward compatibility requirements
+- Existing code to preserve vs. replace
+
+> **On plan revision:** If a plan is revised after initial creation, any new questions use the next available ID (continuing the sequence, not restarting). Previously answered questions retain their original IDs in Confirmed Inputs.
 
 ### 3. Create the Plan File
 
@@ -53,10 +75,16 @@ Write to: `docs/task/planning/draft/{YYYY-MM-DD}-{slug}.md`
 ```markdown
 # Plan: {Title}
 
-> **Status:** Draft | In Progress | Complete
+> **Status:** Questions Pending | Draft | In Progress | Complete
 > **Created:** YYYY-MM-DD
 > **Estimated steps:** {n}
 > **Risk level:** Low | Medium | High
+>
+> **Status Lifecycle:**
+> - `Questions Pending` → created with open questions (initial state)
+> - `Draft` → all questions answered, plan awaiting approval
+> - `In Progress` → user approved, implementation started (via execute-plan)
+> - `Complete` → all gates passed, committed, plan moved to `completed/`
 
 ## Context
 
@@ -70,9 +98,16 @@ Write to: `docs/task/planning/draft/{YYYY-MM-DD}-{slug}.md`
 
 {Desired end state.}
 
-## Assumptions
+## Confirmed Inputs
 
-{List assumptions. Flag anything decided without explicit user input.}
+{Answers from the Question Gate. Each entry references its question ID.}
+
+- **Q1:** {question} → {user's answer}
+- **Q2:** {question} → {user's answer}
+
+## Open Questions for User — BLOCKING
+
+{Any remaining questions. If all questions are answered, state: "None — all questions resolved."}
 
 ## Implementation Steps
 
