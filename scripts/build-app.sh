@@ -4,11 +4,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_DIR/build"
-APP_NAME="Mac Voice"
+APP_NAME="Mac Speech to AI to Text"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 BUNDLE_ID="com.macvoice.app"
 SIGNING_IDENTITY="REDACTED_SIGNING_IDENTITY"
-EXECUTABLE_NAME="MacVoice"
+EXECUTABLE_NAME="MacSpeechToAIToText"
 
 quit_running_app() {
     echo "🛑 Closing running app if needed..."
@@ -41,7 +41,7 @@ open_built_app() {
 
 quit_running_app
 
-echo "🔨 Building Mac Voice..."
+echo "🔨 Building Mac Speech to AI to Text..."
 cd "$PROJECT_DIR"
 swift build -c release 2>&1
 
@@ -58,7 +58,7 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
 # Copy executable
-cp "$EXECUTABLE" "$APP_BUNDLE/Contents/MacOS/MacVoice"
+cp "$EXECUTABLE" "$APP_BUNDLE/Contents/MacOS/MacSpeechToAIToText"
 
 # Create Info.plist
 cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
@@ -67,9 +67,9 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Mac Voice</string>
+    <string>Mac Speech to AI to Text</string>
     <key>CFBundleDisplayName</key>
-    <string>Mac Voice</string>
+    <string>Mac Speech to AI to Text</string>
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleVersion</key>
@@ -83,7 +83,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
-    <string>MacVoice</string>
+    <string>MacSpeechToAIToText</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>LSUIElement</key>
@@ -91,9 +91,9 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Mac Voice needs microphone access to record your voice for transcription.</string>
+    <string>Mac Speech to AI to Text needs microphone access to record your voice for transcription.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>Mac Voice uses speech recognition for wake phrase detection and send phrase monitoring.</string>
+    <string>Mac Speech to AI to Text uses speech recognition for wake phrase detection and send phrase monitoring.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSServices</key>
@@ -102,12 +102,12 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
             <key>NSMenuItem</key>
             <dict>
                 <key>default</key>
-                <string>Start Mac Voice</string>
+                <string>Start Mac Speech to AI to Text</string>
             </dict>
             <key>NSMessage</key>
-            <string>startMacVoice</string>
+            <string>startMacSpeechToAIToText</string>
             <key>NSPortName</key>
-            <string>Mac Voice</string>
+            <string>Mac Speech to AI to Text</string>
             <key>NSSendTypes</key>
             <array>
                 <string>NSStringPboardType</string>
@@ -132,12 +132,12 @@ echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 
 # Copy beep sound files
 echo "🔊 Copying beep sounds..."
-if [ -d "$PROJECT_DIR/MacVoice/Audio/Sounds" ]; then
-    cp "$PROJECT_DIR/MacVoice/Audio/Sounds/"*.wav "$APP_BUNDLE/Contents/Resources/"
+if [ -d "$PROJECT_DIR/MacSpeechToAIToText/Audio/Sounds" ]; then
+    cp "$PROJECT_DIR/MacSpeechToAIToText/Audio/Sounds/"*.wav "$APP_BUNDLE/Contents/Resources/"
 fi
 
 # Create entitlements
-ENTITLEMENTS="$BUILD_DIR/MacVoice.entitlements"
+ENTITLEMENTS="$BUILD_DIR/MacSpeechToAIToText.entitlements"
 cat > "$ENTITLEMENTS" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -151,13 +151,20 @@ cat > "$ENTITLEMENTS" << EOF
 </plist>
 EOF
 
-# Code sign
-echo "🔏 Signing with: $SIGNING_IDENTITY"
-codesign --force --sign "$SIGNING_IDENTITY" \
-    --entitlements "$ENTITLEMENTS" \
-    --options runtime \
-    --timestamp=none \
-    "$APP_BUNDLE"
+# Code sign — use developer identity if available, otherwise ad-hoc
+if security find-identity -v -p codesigning | grep -q "$SIGNING_IDENTITY"; then
+    echo "🔏 Signing with: $SIGNING_IDENTITY"
+    codesign --force --sign "$SIGNING_IDENTITY" \
+        --entitlements "$ENTITLEMENTS" \
+        --options runtime \
+        --timestamp=none \
+        "$APP_BUNDLE"
+else
+    echo "🔏 Developer identity not found — using ad-hoc signing"
+    codesign --force --sign - \
+        --entitlements "$ENTITLEMENTS" \
+        "$APP_BUNDLE"
+fi
 
 # Verify signature
 codesign --verify --verbose "$APP_BUNDLE" 2>&1 && echo "✅ Signature valid" || echo "⚠️  Signature verification issue"

@@ -3,7 +3,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "MacVoice",
+    name: "MacSpeechToAIToText",
     platforms: [
         .macOS(.v14)
     ],
@@ -13,12 +13,12 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "MacVoice",
+            name: "MacSpeechToAIToText",
             dependencies: [
                 "WhisperKit",
                 "HotKey",
             ],
-            path: "MacVoice",
+            path: "MacSpeechToAIToText",
             resources: [
                 .process("Audio/Sounds")
             ],
@@ -27,9 +27,9 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "MacVoiceTests",
-            dependencies: ["MacVoice"],
-            path: "MacVoiceTests"
+            name: "MacSpeechToAIToTextTests",
+            dependencies: ["MacSpeechToAIToText"],
+            path: "MacSpeechToAIToTextTests"
         ),
     ]
 )

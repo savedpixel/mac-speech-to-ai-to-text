@@ -1,6 +1,6 @@
 #!/usr/bin/swift
 
-// Generates AppIcon.icns for Mac Voice using app.png
+// Generates AppIcon.icns for Mac Speech to AI to Text using app.png
 
 import AppKit
 import Foundation

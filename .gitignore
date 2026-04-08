@@ -8,12 +8,21 @@ xcuserdata/
 # Swift Package Manager
 .build/
 .swiftpm/
+Package.resolved
 
 # Build Output
 build/
 
-# Docs
+# Internal docs (agent observations, task tracking, planning)
 docs/
+
+# Copilot / Agent workflow files
+.github/instructions/
+.github/prompts/
+AGENTS.md
+
+# Source assets
+app.png
 
 # Removals / Tests
 beeps/
@@ -22,7 +31,7 @@ visibility_test.swift
 test_section.swift
 toggle_test.swift
 
-# Misc assets & project notes
+# Misc
 icon.png
 icon2.png
 project.md
