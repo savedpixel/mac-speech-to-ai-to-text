@@ -53,7 +53,7 @@ No app switching. No copy-pasting. Just speak and send.
 ### Build From Source
 
 ```bash
-git clone https://github.com/yourusername/mac-speech-to-ai-to-text.git
+git clone https://github.com/savedpixel/mac-speech-to-ai-to-text.git
 cd mac-speech-to-ai-to-text
 swift build
 bash scripts/build-app.sh
