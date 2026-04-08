@@ -7,7 +7,6 @@ BUILD_DIR="$PROJECT_DIR/build"
 APP_NAME="Mac Speech to AI to Text"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 BUNDLE_ID="com.macvoice.app"
-SIGNING_IDENTITY="REDACTED_SIGNING_IDENTITY"
 EXECUTABLE_NAME="MacSpeechToAIToText"
 
 quit_running_app() {
@@ -151,20 +150,11 @@ cat > "$ENTITLEMENTS" << EOF
 </plist>
 EOF
 
-# Code sign — use developer identity if available, otherwise ad-hoc
-if security find-identity -v -p codesigning | grep -q "$SIGNING_IDENTITY"; then
-    echo "🔏 Signing with: $SIGNING_IDENTITY"
-    codesign --force --sign "$SIGNING_IDENTITY" \
-        --entitlements "$ENTITLEMENTS" \
-        --options runtime \
-        --timestamp=none \
-        "$APP_BUNDLE"
-else
-    echo "🔏 Developer identity not found — using ad-hoc signing"
-    codesign --force --sign - \
-        --entitlements "$ENTITLEMENTS" \
-        "$APP_BUNDLE"
-fi
+# Code sign — ad-hoc signing for local development
+echo "🔏 Signing with ad-hoc identity"
+codesign --force --sign - \
+    --entitlements "$ENTITLEMENTS" \
+    "$APP_BUNDLE"
 
 # Verify signature
 codesign --verify --verbose "$APP_BUNDLE" 2>&1 && echo "✅ Signature valid" || echo "⚠️  Signature verification issue"
