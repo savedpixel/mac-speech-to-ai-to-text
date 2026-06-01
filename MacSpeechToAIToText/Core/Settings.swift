@@ -36,12 +36,14 @@ final class Settings {
         static let beepEnabled = "beepEnabled"
         static let selectedMicrophoneID = "selectedMicrophoneID"
         static let keepMicrophoneConnected = "keepMicrophoneConnected"
+        static let modelStoragePath = "modelStoragePath"
+        static let diagnosticFileLoggingEnabled = "diagnosticFileLoggingEnabled"
     }
 
     // MARK: - Whisper Model
 
     /// Fallback model names when dynamic fetch fails.
-    static let fallbackModels = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
+    static let fallbackModels = ["tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3_turbo"]
 
     static func whisperModelDisplayName(_ model: String) -> String {
         switch model {
@@ -252,6 +254,13 @@ final class Settings {
         didSet { defaults.set(beepEnabled, forKey: Key.beepEnabled) }
     }
 
+    var diagnosticFileLoggingEnabled: Bool {
+        didSet {
+            defaults.set(diagnosticFileLoggingEnabled, forKey: Key.diagnosticFileLoggingEnabled)
+            DiagnosticLogger.shared.configure(enabled: diagnosticFileLoggingEnabled)
+        }
+    }
+
     var selectedMicrophoneID: String {
         didSet { 
             defaults.set(selectedMicrophoneID, forKey: Key.selectedMicrophoneID) 
@@ -261,6 +270,19 @@ final class Settings {
     
     /// Callback fired when `selectedMicrophoneID` changes. Set by AppDelegate.
     var onMicrophoneChanged: ((String) -> Void)?
+
+    // MARK: - Model Storage
+
+    /// User-chosen directory for Whisper model storage. Empty string = default (~/Library/Application Support/MacVoice/Models/).
+    var modelStoragePath: String {
+        didSet {
+            defaults.set(modelStoragePath, forKey: Key.modelStoragePath)
+            onModelStoragePathChanged?(modelStoragePath)
+        }
+    }
+
+    /// Callback fired when model storage path changes.
+    var onModelStoragePathChanged: ((String) -> Void)?
 
     // MARK: - Mic Disconnect (runtime only, not persisted)
 
@@ -304,6 +326,8 @@ final class Settings {
             Key.beepEnabled: true,
             Key.selectedMicrophoneID: "",
             Key.keepMicrophoneConnected: false,
+            Key.modelStoragePath: "",
+            Key.diagnosticFileLoggingEnabled: true,
         ])
 
         self.sendPhrase = defs.string(forKey: Key.sendPhrase) ?? "OK, send"
@@ -326,6 +350,9 @@ final class Settings {
         self.soundPreset = Self.sanitizeSoundPreset(defs.string(forKey: Key.soundPreset))
         self.beepVolume = defs.object(forKey: Key.beepVolume) != nil ? defs.double(forKey: Key.beepVolume) : 0.7
         self.beepEnabled = defs.object(forKey: Key.beepEnabled) != nil ? defs.bool(forKey: Key.beepEnabled) : true
+        self.diagnosticFileLoggingEnabled = defs.object(forKey: Key.diagnosticFileLoggingEnabled) != nil
+            ? defs.bool(forKey: Key.diagnosticFileLoggingEnabled)
+            : true
         let storedMicrophoneID = defs.string(forKey: Key.selectedMicrophoneID) ?? ""
         if storedMicrophoneID.isEmpty {
             self.selectedMicrophoneID = ""
@@ -337,6 +364,7 @@ final class Settings {
         // Load new settings
         self.insertPhrase = defs.string(forKey: Key.insertPhrase) ?? "Insert"
         self.insertPhraseEnabled = defs.bool(forKey: Key.insertPhraseEnabled)
+        self.modelStoragePath = defs.string(forKey: Key.modelStoragePath) ?? ""
         self.keepOverlayOpenOnCopy = defs.bool(forKey: Key.keepOverlayOpenOnCopy)
         self.copyAutoDismissDelay = defs.integer(forKey: Key.copyAutoDismissDelay)
 
@@ -392,6 +420,8 @@ final class Settings {
         }
 
         defs.set(self.soundPreset, forKey: Key.soundPreset)
+        DiagnosticLogger.shared.configure(enabled: diagnosticFileLoggingEnabled)
+        DiagnosticLogger.shared.write("settings", "Settings loaded selectedMicrophoneID=\(selectedMicrophoneID.isEmpty ? "system-default" : selectedMicrophoneID) keepMicrophoneConnected=\(keepMicrophoneConnected) micDisconnected=\(micDisconnected)")
 
         logger.debug("Settings loaded")
     }

@@ -8,6 +8,13 @@ struct PreferencesView: View {
 
     @State private var recordingBindingID: UUID?
 
+    private var modelStorageDisplayPath: String {
+        if settings.modelStoragePath.isEmpty {
+            return "Default (~/Documents/huggingface/)"
+        }
+        return settings.modelStoragePath
+    }
+
     var body: some View {
         TabView {
             generalTab
@@ -70,6 +77,36 @@ struct PreferencesView: View {
                 Picker("Whisper Model:", selection: $settings.whisperModel) {
                     ForEach(Settings.fallbackModels, id: \.self) { model in
                         Text(Settings.whisperModelDisplayName(model)).tag(model)
+                    }
+                }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Model Storage:")
+                        Text(modelStorageDisplayPath)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer()
+                    Button("Choose…") {
+                        let panel = NSOpenPanel()
+                        panel.canChooseFiles = false
+                        panel.canChooseDirectories = true
+                        panel.canCreateDirectories = true
+                        panel.allowsMultipleSelection = false
+                        panel.prompt = "Select"
+                        panel.message = "Choose where Whisper models are stored"
+                        if panel.runModal() == .OK, let url = panel.url {
+                            settings.modelStoragePath = url.path
+                        }
+                    }
+                    if !settings.modelStoragePath.isEmpty {
+                        Button("Reset") {
+                            settings.modelStoragePath = ""
+                        }
+                        .foregroundStyle(.secondary)
                     }
                 }
             }

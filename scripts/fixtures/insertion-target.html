@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MacVoice Insertion Target Fixture</title>
+<style>
+  body { font: 16px -apple-system, BlinkMacSystemFont, sans-serif; margin: 32px; }
+  textarea { width: min(900px, 90vw); height: 260px; font: 16px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 12px; }
+  .hint { color: #555; max-width: 780px; line-height: 1.45; }
+</style>
+</head>
+<body>
+  <h1>MacVoice Insertion Target Fixture</h1>
+  <p class="hint">Use this page as the app you switch to after starting MacVoice from another input. It exists so the diagnostic script can keep a known browser/input visible while MacVoice restores the original target.</p>
+  <textarea id="target" autofocus placeholder="If MacVoice incorrectly pastes into the browser, text will appear here."></textarea>
+  <script>document.getElementById('target').focus();</script>
+</body>
+</html>

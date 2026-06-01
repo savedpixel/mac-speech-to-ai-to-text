@@ -9,6 +9,8 @@ final class SendPhraseDetector {
     private var recognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
+    private var pendingRestartWorkItem: DispatchWorkItem?
+    private var shouldMonitor = false
     private var phraseDetectedTime: Date?
     private var silenceReadyFired = true  // true initially — don't beep before first speech
     private var lastRecognizedText = ""
@@ -27,6 +29,10 @@ final class SendPhraseDetector {
 
     /// Begin monitoring for the send phrase. Call `appendBuffer(_:)` to feed audio.
     func startMonitoring() {
+        shouldMonitor = true
+        pendingRestartWorkItem?.cancel()
+        pendingRestartWorkItem = nil
+
         let authStatus = SFSpeechRecognizer.authorizationStatus()
         logger.info("Speech auth status: \(String(describing: authStatus).replacingOccurrences(of: "SFSpeechRecognizerAuthorizationStatus.", with: ""), privacy: .public)")
         
@@ -40,11 +46,16 @@ final class SendPhraseDetector {
             return
         }
 
-        stopMonitoring()
+        tearDownRecognition(cancelTask: true)
+        reset()
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.addsPunctuation = false
+        request.taskHint = .dictation
+        if #available(macOS 13, *), recognizer.supportsOnDeviceRecognition {
+            request.requiresOnDeviceRecognition = true
+        }
         recognitionRequest = request
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
@@ -71,7 +82,13 @@ final class SendPhraseDetector {
             }
 
             if let error {
-                self.logger.error("Speech recognition error: \(String(describing: error), privacy: .public)")
+                self.handleRecognitionError(error)
+                return
+            }
+
+            if result?.isFinal ?? false {
+                self.logger.debug("Send phrase recognizer produced a final result — restarting")
+                self.scheduleRecognitionRestart(after: 0.4)
             }
         }
 
@@ -136,15 +153,54 @@ final class SendPhraseDetector {
     }
 
     func stopMonitoring() {
-        recognitionTask?.cancel()
+        shouldMonitor = false
+        pendingRestartWorkItem?.cancel()
+        pendingRestartWorkItem = nil
+        tearDownRecognition(cancelTask: true)
+        reset()
+        logger.debug("Send phrase monitoring stopped")
+    }
+
+    private func handleRecognitionError(_ error: Error) {
+        let nsError = error as NSError
+        if isNormalRecognitionEnd(nsError) {
+            logger.debug("Send phrase recognition session ended normally (code=\(nsError.code, privacy: .public)); restarting")
+            scheduleRecognitionRestart(after: 0.5)
+            return
+        }
+
+        logger.warning("Send phrase recognition error: \(String(describing: error), privacy: .public)")
+        scheduleRecognitionRestart(after: 1.0)
+    }
+
+    private func scheduleRecognitionRestart(after delay: TimeInterval) {
+        guard shouldMonitor else { return }
+        pendingRestartWorkItem?.cancel()
+        tearDownRecognition(cancelTask: false)
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.shouldMonitor else { return }
+            self.startMonitoring()
+        }
+        pendingRestartWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func tearDownRecognition(cancelTask: Bool) {
+        let task = recognitionTask
         recognitionTask = nil
         recognitionRequest?.endAudio()
         recognitionRequest = nil
-        phraseDetectedTime = nil
-        silenceReadyFired = true
-        lastRecognizedText = ""
-        lastWordCount = 0
-        logger.debug("Send phrase monitoring stopped")
+        if cancelTask {
+            task?.cancel()
+        }
+    }
+
+    private func isNormalRecognitionEnd(_ error: NSError) -> Bool {
+        error.code == 1110 ||
+        error.code == 216 ||
+        error.code == 301 ||
+        error.domain == "kAFAssistantErrorDomain"
     }
 
     func reset() {

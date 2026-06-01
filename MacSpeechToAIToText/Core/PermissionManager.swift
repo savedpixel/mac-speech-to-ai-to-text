@@ -25,6 +25,7 @@ final class PermissionManager {
         logger.info(
             "Permissions — accessibility: \(self.accessibilityGranted), mic: \(self.microphoneGranted), speech: \(self.speechRecognitionGranted), input: \(self.inputMonitoringGranted)"
         )
+        DiagnosticLogger.shared.write("permissions", "Checked permissions accessibility=\(accessibilityGranted) microphone=\(microphoneGranted) speech=\(speechRecognitionGranted) inputMonitoring=\(inputMonitoringGranted)")
     }
 
     func checkAccessibility() {

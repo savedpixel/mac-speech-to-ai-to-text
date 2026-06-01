@@ -44,11 +44,13 @@ final class ShortcutManager {
             let promptID = binding.promptID
             hotKey.keyDownHandler = { [weak self] in
                 self?.logger.info("Shortcut triggered: '\(binding.label)'")
+                DiagnosticLogger.shared.write("shortcut", "Shortcut triggered id=\(binding.id) label=\(binding.label.isEmpty ? "untitled" : binding.label) promptID=\(promptID?.uuidString ?? "default")")
                 self?.onActivate(promptID)
             }
             hotKeys[binding.id] = hotKey
         }
 
         logger.info("Registered \(self.hotKeys.count) global shortcut(s)")
+        DiagnosticLogger.shared.write("shortcut", "Registered \(hotKeys.count) global shortcut(s)")
     }
 }

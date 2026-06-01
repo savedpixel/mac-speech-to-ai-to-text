@@ -6,6 +6,11 @@ import os
 final class PipelineCoordinator {
     private let logger = Logger(subsystem: "com.macvoice.app", category: "core")
 
+    private enum RecordingFinishReason: String {
+        case manual
+        case sendPhrase
+    }
+
     private let settings: Settings
     private let permissionManager: PermissionManager
     let audioRecorder: AudioRecorder
@@ -103,7 +108,7 @@ final class PipelineCoordinator {
             self.logger.info("Send phrase confirmed — delivering")
 
             Task { @MainActor [weak self] in
-                await self?.finalizePipeline()
+                await self?.finalizePipeline(reason: .sendPhrase)
             }
         }
     }
@@ -111,8 +116,10 @@ final class PipelineCoordinator {
     /// Primary entry point — triggered by shortcut or wake phrase.
     /// - Parameter promptID: Optional prompt override for AI cleanup; nil = use selected prompt.
     func activate(promptID: UUID? = nil) {
+        DiagnosticLogger.shared.write("pipeline", "Activate requested state=\(state.displayName) promptID=\(promptID?.uuidString ?? "default") micDisconnected=\(settings.micDisconnected) keepMicrophoneConnected=\(settings.keepMicrophoneConnected)")
         guard state == .idle else {
             logger.warning("Pipeline already active (state: \(self.state.displayName))")
+            DiagnosticLogger.shared.write("pipeline", "Activate ignored because pipeline already active state=\(state.displayName)")
             return
         }
 
@@ -122,6 +129,7 @@ final class PipelineCoordinator {
 
         guard permissionManager.microphoneGranted else {
             logger.error("Microphone permission not granted")
+            DiagnosticLogger.shared.write("pipeline", "Activate failed microphone permission not granted")
             transition(to: .error("Microphone access required"))
             return
         }
@@ -144,7 +152,7 @@ final class PipelineCoordinator {
         guard state == .recording else { return }
         logger.info("Manual finish recording requested")
         Task { @MainActor in
-            await finalizePipeline()
+            await finalizePipeline(reason: .manual)
         }
     }
 
@@ -154,6 +162,7 @@ final class PipelineCoordinator {
     private func runPipeline() async {
         // Stage 1: Prepare
         transition(to: .preparingToRecord)
+        DiagnosticLogger.shared.write("pipeline", "Preparing to record selectedMicrophoneID=\(settings.selectedMicrophoneID.isEmpty ? "system-default" : settings.selectedMicrophoneID)")
 
         wakePhraseListener?.pauseListening()
         textInserter.captureActiveElement()
@@ -161,42 +170,52 @@ final class PipelineCoordinator {
         // Pause media in background — don't block recording startup
         Task { await mediaController.pauseMedia() }
 
-        // Play beep without waiting for it to finish
-        Task { @MainActor in await audioSignalPlayer.playReadyBeep() }
+        DiagnosticLogger.shared.write("pipeline", "Shortcut pressed; playing pre-recording beep enabled=\(settings.beepEnabled) volume=\(settings.beepVolume) preset=\(settings.soundPreset)")
+        let preRecordingBeepPlayed = await audioSignalPlayer.playRecordingStartedBeep()
+        DiagnosticLogger.shared.write("pipeline", "Shortcut pre-recording beep result played=\(preRecordingBeepPlayed) enabled=\(settings.beepEnabled) volume=\(settings.beepVolume) preset=\(settings.soundPreset)")
 
         onOverlayShow?()
 
-        // Stage 2: Record
-        transition(to: .recording)
-
         do {
             recordingURL = try await audioRecorder.startRecording()
-              if settings.sendPhraseEnabled {
-                  sendPhraseDetector.startMonitoring()
-                  logger.info("Recording — say '\(self.settings.sendPhrase)' to send")
-              } else {
-                  logger.info("Recording — press Done to finish")
-              }
+            DiagnosticLogger.shared.write("pipeline", "Audio recorder returned live URL=\(recordingURL?.lastPathComponent ?? "nil")")
+            transition(to: .recording)
+            if settings.sendPhraseEnabled {
+                sendPhraseDetector.startMonitoring()
+                logger.info("Recording — say '\(self.settings.sendPhrase)' to send")
+            } else {
+                logger.info("Recording — press Done to finish")
+            }
         } catch {
             logger.error("Failed to start recording: \(error.localizedDescription)")
+            DiagnosticLogger.shared.write("pipeline", "Recording startup failed error=\(error.localizedDescription)")
             cleanup(forceStopInsertListener: true)
             transition(to: .error("Recording failed: \(error.localizedDescription)"))
         }
     }
 
     @MainActor
-    private func finalizePipeline() async {
+    private func finalizePipeline(reason: RecordingFinishReason = .manual) async {
         guard state == .recording else { return }
+        DiagnosticLogger.shared.write("pipeline", "Finalize requested reason=\(reason.rawValue)")
 
         // Stop recording & send phrase detector
         sendPhraseDetector.stopMonitoring()
         guard let url = audioRecorder.stopRecording() else {
+            DiagnosticLogger.shared.write("pipeline", "Finalize failed no recording URL")
             cleanup(forceStopInsertListener: true)
             transition(to: .error("No recording file"))
             return
         }
 
-        await audioSignalPlayer.playRecordingFinishedBeep()
+        switch reason {
+        case .manual:
+            DiagnosticLogger.shared.write("pipeline", "Manual finish accepted; playing recording-finished beep")
+            await audioSignalPlayer.playRecordingFinishedBeep()
+        case .sendPhrase:
+            DiagnosticLogger.shared.write("pipeline", "Send phrase accepted; playing send-accepted beep before transcription")
+            await audioSignalPlayer.playSendAcceptedBeep()
+        }
 
         // Disconnect mic immediately — no need for it during transcription/cleaning
         if !settings.keepMicrophoneConnected && !settings.micDisconnected {
@@ -305,11 +324,26 @@ final class PipelineCoordinator {
         }
     }
 
-    func insertResult() {
+    func insertResult(playConfirmationBeep: Bool = false) {
         guard case .completed(let result) = state else { return }
-        textInserter.insertTextAndSubmit(result.displayText)
-        logger.info("Result inserted")
-        dismiss()
+        let insertedText = result.displayText
+        guard !insertedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            logger.warning("Insert requested with empty result — skipping insertion")
+            DiagnosticLogger.shared.write("pipeline", "Insert skipped empty result")
+            return
+        }
+
+        DiagnosticLogger.shared.write("pipeline", "Insert result requested chars=\(insertedText.count) playConfirmationBeep=\(playConfirmationBeep)")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let didSubmit = await self.textInserter.insertTextAndSubmit(insertedText)
+            self.logger.info("Result insert submitted: \(didSubmit, privacy: .public)")
+            DiagnosticLogger.shared.write("pipeline", "Insert result submitted didSubmit=\(didSubmit)")
+            if playConfirmationBeep, didSubmit {
+                await audioSignalPlayer.playInsertDoneBeep()
+            }
+            self.dismiss()
+        }
     }
 
     /// Retry AI cleanup on the current completed result's raw text.
@@ -372,6 +406,7 @@ final class PipelineCoordinator {
         }
         state = newState
         logger.info("Pipeline: \(oldState.displayName) → \(newState.displayName)")
+        DiagnosticLogger.shared.write("pipeline", "State \(oldState.displayName) -> \(newState.displayName)")
 
         // Start insert phrase listener when completed; stop it otherwise
         if case .completed = newState,
@@ -492,7 +527,7 @@ final class PipelineCoordinator {
         var variants = [phrase]
         let words = phrase.split(separator: " ")
         if words.count >= 2 {
-            variants.append(words[0] + ", " + words.dropFirst().joined(separator: " "))
+            variants.append("\(words[0]), \(words.dropFirst().joined(separator: " "))")
         }
         if phrase.hasPrefix("ok ") {
             variants.append("okay" + phrase.dropFirst(2))

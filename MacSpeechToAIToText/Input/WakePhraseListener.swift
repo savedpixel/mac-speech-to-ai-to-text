@@ -27,7 +27,7 @@ final class WakePhraseListener: NSObject, SFSpeechRecognizerDelegate {
         // Add comma-separated variant (e.g. "ok voice" → "ok, voice")
         let words = phrase.split(separator: " ")
         if words.count >= 2 {
-            let commaVariant = words[0] + ", " + words.dropFirst().joined(separator: " ")
+            let commaVariant = "\(words[0]), \(words.dropFirst().joined(separator: " "))"
             variants.append(commaVariant)
         }
         // If starts with "ok", also add "okay" variant and vice versa

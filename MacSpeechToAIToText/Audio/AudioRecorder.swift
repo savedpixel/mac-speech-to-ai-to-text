@@ -13,6 +13,9 @@ final class AudioRecorder {
     private let logger = Logger(subsystem: "com.macvoice.app", category: "audio")
     private let maxWaveformSamples = 720
     private let waveformFramesPerSecond: Double = 18
+    private let bluetoothRouteSettleDelayMs: UInt64 = 800
+    private let configChangeDebounceSeconds: TimeInterval = 0.35
+    private let configChangeIgnoreWindowSeconds: TimeInterval = 0.75
     private var waveformFramesPerBucket: Int = 2450
     private var waveformAccumulatedPeak: Float = 0
     private var waveformAccumulatedPower: Float = 0
@@ -28,6 +31,12 @@ final class AudioRecorder {
     private(set) var waveformSamples: [Float] = []
     private var recordingURL: URL?
     private var configObserver: Any?
+    private var pendingConfigChangeWorkItem: DispatchWorkItem?
+    private var isRebuildingEngine = false
+    private var ignoreConfigChangesUntil: Date = .distantPast
+    private var activeRecordingSampleRate: Double = 0
+    private var activeRecordingChannelCount: AVAudioChannelCount = 0
+    private var lastAudioBufferAt: Date = .distantPast
     private let settings: Settings
 
     /// Callback fired when silence is detected for a given duration.
@@ -65,36 +74,36 @@ final class AudioRecorder {
         let tempDir = FileManager.default.temporaryDirectory
         let url = tempDir.appendingPathComponent("macspeech_recording_\(UUID().uuidString).wav")
         recordingURL = url
+        DiagnosticLogger.shared.write("audio", "startRecording requested selectedMicrophoneID=\(settings.selectedMicrophoneID.isEmpty ? "system-default" : settings.selectedMicrophoneID) url=\(url.lastPathComponent)")
 
-        // Pre-trigger BT audio route change by briefly touching the input node.
-        // This causes the A2DP→HFP switch to happen before we install our real tap,
-        // preventing the config-change rebuild that causes the mic indicator to flash.
-        // Non-fatal: if the probe fails (e.g. mic contention from wake phrase teardown),
-        // we skip it and proceed directly — BT users may see a brief mic flash.
-        do {
-            let probe = AVAudioEngine()
-            if !settings.selectedMicrophoneID.isEmpty {
-                _ = probe.inputNode.applyPreferredInputDevice(uid: settings.selectedMicrophoneID)
+        if shouldPrimeInputRouteBeforeRecording() {
+            DiagnosticLogger.shared.write("audio", "Priming Bluetooth input route before recording")
+            // Only Bluetooth devices need the extra route-settling pass. For USB and wired mics,
+            // the fixed 800ms wait makes recording feel laggy and causes missed opening words.
+            do {
+                let probe = AVAudioEngine()
+                if !settings.selectedMicrophoneID.isEmpty {
+                    _ = probe.inputNode.applyPreferredInputDevice(uid: settings.selectedMicrophoneID)
+                }
+                let _ = probe.inputNode.outputFormat(forBus: 0)
+                probe.prepare()
+                try probe.start()
+                probe.stop()
+                try await Task.sleep(nanoseconds: bluetoothRouteSettleDelayMs * 1_000_000)
+            } catch {
+                logger.info("Bluetooth route probe skipped (non-fatal): \(error.localizedDescription)")
+                DiagnosticLogger.shared.write("audio", "Bluetooth route probe skipped error=\(error.localizedDescription)")
             }
-            let _ = probe.inputNode.outputFormat(forBus: 0)
-            probe.prepare()
-            try probe.start()
-            probe.stop()
-            // Wait for the BT route to settle
-            try await Task.sleep(for: .milliseconds(800))
-        } catch {
-            logger.info("BT probe skipped (non-fatal): \(error.localizedDescription)")
-            // Brief settling delay even without probe
-            try await Task.sleep(for: .milliseconds(200))
         }
 
-        try setupEngine(fileURL: url)
+        try await setupEngineWithRetry(fileURL: url)
         recordingStartDate = .now
         waveformSamples.removeAll(keepingCapacity: true)
         resetWaveformState()
         isRecording = true
 
         logger.info("Recording started: \(url.lastPathComponent)")
+        DiagnosticLogger.shared.write("audio", "Recording started url=\(url.lastPathComponent)")
         return url
     }
 
@@ -107,17 +116,53 @@ final class AudioRecorder {
         resetWaveformState()
 
         logger.info("Recording stopped")
+        DiagnosticLogger.shared.write("audio", "Recording stopped url=\(recordingURL?.lastPathComponent ?? "nil")")
         return recordingURL
     }
 
     // MARK: - Engine lifecycle
 
-    private func setupEngine(fileURL: URL) throws {
+    private func setupEngineWithRetry(fileURL: URL) async throws {
+        let maxAttempts = 4
+        var lastError: Error?
+
+        for attempt in 1...maxAttempts {
+            do {
+                try setupEngine(fileURL: fileURL, recreateAudioFile: true)
+                if attempt > 1 {
+                    logger.info("Recording engine started after retry \(attempt, privacy: .public)")
+                }
+                DiagnosticLogger.shared.write("audio", "Recording engine started attempt=\(attempt)")
+                return
+            } catch {
+                lastError = error
+                logger.warning("Recording engine start failed on attempt \(attempt, privacy: .public)/\(maxAttempts, privacy: .public): \(error.localizedDescription)")
+                DiagnosticLogger.shared.write("audio", "Recording engine start failed attempt=\(attempt)/\(maxAttempts) error=\(error.localizedDescription)")
+                teardownEngine()
+
+                guard attempt < maxAttempts else { break }
+                let backoffMs = UInt64(150 * attempt * attempt)
+                try await Task.sleep(nanoseconds: backoffMs * 1_000_000)
+            }
+        }
+
+        throw lastError ?? NSError(
+            domain: "com.macvoice.app",
+            code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "Recording engine failed to start"]
+        )
+    }
+
+    private func setupEngine(fileURL: URL, recreateAudioFile: Bool) throws {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
 
         if !settings.selectedMicrophoneID.isEmpty {
-            inputNode.applyPreferredInputDevice(uid: settings.selectedMicrophoneID)
+            let didApplyPreferredInput = inputNode.applyPreferredInputDevice(uid: settings.selectedMicrophoneID)
+            if !didApplyPreferredInput {
+                logger.warning("Preferred microphone unavailable — falling back to current system input")
+                DiagnosticLogger.shared.write("audio", "Preferred microphone unavailable id=\(settings.selectedMicrophoneID); falling back to system input")
+            }
         }
 
         let format = inputNode.outputFormat(forBus: 0)
@@ -125,21 +170,24 @@ final class AudioRecorder {
         waveformSampleInterval = Double(waveformFramesPerBucket) / format.sampleRate
 
         logger.debug("Audio format: rate=\(format.sampleRate, privacy: .public), ch=\(format.channelCount, privacy: .public)")
+        DiagnosticLogger.shared.write("audio", "Input format sampleRate=\(format.sampleRate) channels=\(format.channelCount)")
 
         guard format.sampleRate > 0 else {
             throw NSError(domain: "com.macvoice.app", code: 1, userInfo: [NSLocalizedDescriptionKey: "No audio input available (sample rate 0)"])
         }
 
-        audioFile = try AVAudioFile(
-            forWriting: fileURL,
-            settings: [
-                AVFormatIDKey: Int(kAudioFormatLinearPCM),
-                AVSampleRateKey: format.sampleRate,
-                AVNumberOfChannelsKey: format.channelCount,
-                AVLinearPCMBitDepthKey: 16,
-                AVLinearPCMIsFloatKey: false,
-            ]
-        )
+        if recreateAudioFile || !canReuseOpenAudioFile(for: format) {
+            audioFile = try AVAudioFile(
+                forWriting: fileURL,
+                settings: [
+                    AVFormatIDKey: Int(kAudioFormatLinearPCM),
+                    AVSampleRateKey: format.sampleRate,
+                    AVNumberOfChannelsKey: format.channelCount,
+                    AVLinearPCMBitDepthKey: 16,
+                    AVLinearPCMIsFloatKey: false,
+                ]
+            )
+        }
 
         lastSpeechTime = .now
 
@@ -151,6 +199,10 @@ final class AudioRecorder {
         engine.prepare()
         try engine.start()
 
+        activeRecordingSampleRate = format.sampleRate
+        activeRecordingChannelCount = format.channelCount
+        lastAudioBufferAt = .now
+
         configObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,
             object: engine,
@@ -160,9 +212,91 @@ final class AudioRecorder {
         }
 
         audioEngine = engine
+        ignoreConfigChangesUntil = Date().addingTimeInterval(configChangeIgnoreWindowSeconds)
     }
 
 
+
+    private func shouldPrimeInputRouteBeforeRecording() -> Bool {
+        guard !settings.selectedMicrophoneID.isEmpty else { return false }
+        guard let transportType = transportTypeForDevice(uid: settings.selectedMicrophoneID) else {
+            return false
+        }
+
+        return transportType == kAudioDeviceTransportTypeBluetooth
+            || transportType == kAudioDeviceTransportTypeBluetoothLE
+    }
+
+    private func canReuseOpenAudioFile(for format: AVAudioFormat) -> Bool {
+        guard let audioFile else { return false }
+        let currentFormat = audioFile.processingFormat
+        return currentFormat.sampleRate == format.sampleRate
+            && currentFormat.channelCount == format.channelCount
+    }
+
+    private func transportTypeForDevice(uid: String) -> UInt32? {
+        for deviceID in allInputDeviceIDs() {
+            guard uidForDevice(deviceID) == uid else { continue }
+
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyTransportType,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var transportType: UInt32 = 0
+            var size = UInt32(MemoryLayout<UInt32>.size)
+            let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &transportType)
+            if status == noErr {
+                return transportType
+            }
+        }
+        return nil
+    }
+
+    private func allInputDeviceIDs() -> [AudioDeviceID] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr else {
+            return []
+        }
+
+        let count = Int(size) / MemoryLayout<AudioDeviceID>.size
+        var deviceIDs = Array(repeating: AudioDeviceID(0), count: count)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceIDs) == noErr else {
+            return []
+        }
+
+        return deviceIDs.filter { deviceHasInput($0) }
+    }
+
+    private func deviceHasInput(_ deviceID: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &size) == noErr else {
+            return false
+        }
+
+        let bufferList = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment)
+        defer { bufferList.deallocate() }
+
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, bufferList) == noErr else {
+            return false
+        }
+
+        let audioBufferList = bufferList.assumingMemoryBound(to: AudioBufferList.self)
+        let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
+        return buffers.contains { $0.mNumberChannels > 0 }
+    }
 
     private func uidForDevice(_ deviceID: AudioDeviceID) -> String? {
         var uidAddress = AudioObjectPropertyAddress(
@@ -178,6 +312,8 @@ final class AudioRecorder {
     }
 
     private func teardownEngine() {
+        pendingConfigChangeWorkItem?.cancel()
+        pendingConfigChangeWorkItem = nil
         if let observer = configObserver {
             NotificationCenter.default.removeObserver(observer)
             configObserver = nil
@@ -190,56 +326,106 @@ final class AudioRecorder {
     }
 
     private func handleConfigChange() {
-        guard isRecording, let engine = audioEngine else { return }
-        logger.warning("Audio engine config changed — restarting in-place")
-
-        let inputNode = engine.inputNode
-        inputNode.removeTap(onBus: 0)
-
-        // Get the new format after the route change
-        let newFormat = inputNode.outputFormat(forBus: 0)
-        logger.debug("New format: rate=\(newFormat.sampleRate, privacy: .public), ch=\(newFormat.channelCount, privacy: .public)")
-
-        guard newFormat.sampleRate > 0, newFormat.channelCount > 0 else {
-            logger.error("New format invalid — cannot restart")
+        guard isRecording else { return }
+        guard Date() >= ignoreConfigChangesUntil else {
+            logger.debug("Ignoring audio engine config change during stabilization window")
             return
         }
 
-        // Recreate audio file with new format
-        if let url = recordingURL {
-            do {
-                audioFile = try AVAudioFile(
-                    forWriting: url,
-                    settings: [
-                        AVFormatIDKey: Int(kAudioFormatLinearPCM),
-                        AVSampleRateKey: newFormat.sampleRate,
-                        AVNumberOfChannelsKey: newFormat.channelCount,
-                        AVLinearPCMBitDepthKey: 16,
-                        AVLinearPCMIsFloatKey: false,
-                    ]
-                )
-            } catch {
-                logger.error("Failed to recreate audio file: \(error.localizedDescription)")
-            }
+        pendingConfigChangeWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.rebuildEngineAfterConfigChange()
+        }
+        pendingConfigChangeWorkItem = workItem
+
+        logger.warning("Audio engine config changed — scheduling rebuild")
+        DiagnosticLogger.shared.write("audio", "Audio engine config changed; scheduling debounce rebuild")
+        DispatchQueue.main.asyncAfter(deadline: .now() + configChangeDebounceSeconds, execute: workItem)
+    }
+
+    private func rebuildEngineAfterConfigChange() {
+        guard isRecording else { return }
+        guard !isRebuildingEngine else {
+            logger.debug("Skipping engine rebuild — rebuild already in progress")
+            return
+        }
+        guard Date() >= ignoreConfigChangesUntil else {
+            logger.debug("Skipping engine rebuild — still within stabilization window")
+            return
         }
 
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: newFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            self.processBuffer(buffer)
+        isRebuildingEngine = true
+        defer { isRebuildingEngine = false }
+
+        if canKeepCurrentEngineAfterConfigChange() {
+            ignoreConfigChangesUntil = Date().addingTimeInterval(configChangeIgnoreWindowSeconds)
+            pendingConfigChangeWorkItem = nil
+            return
+        }
+
+        teardownEngine()
+
+        guard let url = recordingURL else {
+            logger.error("No recording URL — cannot rebuild engine")
+            return
         }
 
         do {
-            engine.prepare()
-            try engine.start()
+            try setupEngine(fileURL: url, recreateAudioFile: false)
             lastSpeechTime = .now
-            logger.info("Audio engine restarted in-place")
+            logger.info("Audio engine rebuilt successfully after config change")
+            DiagnosticLogger.shared.write("audio", "Audio engine rebuilt after config change")
             onEngineRebuilt?()
         } catch {
-            logger.error("Failed to restart audio engine: \(String(describing: error), privacy: .public)")
+            logger.error("Failed to rebuild audio engine: \(error.localizedDescription)")
+            DiagnosticLogger.shared.write("audio", "Audio engine rebuild failed error=\(error.localizedDescription)")
         }
     }
 
+    private func canKeepCurrentEngineAfterConfigChange() -> Bool {
+        guard let engine = audioEngine else { return false }
+
+        let format = engine.inputNode.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            logger.warning("Audio config changed to invalid format — rebuilding")
+            return false
+        }
+
+        let formatUnchanged = format.sampleRate == activeRecordingSampleRate
+            && format.channelCount == activeRecordingChannelCount
+        let recentlyReceivedAudio = Date().timeIntervalSince(lastAudioBufferAt) < 1.5
+
+        if formatUnchanged {
+            if !engine.isRunning {
+                do {
+                    engine.prepare()
+                    try engine.start()
+                    lastAudioBufferAt = .now
+                    logger.info("Audio engine restarted after same-format config change")
+                    DiagnosticLogger.shared.write("audio", "Config change restarted existing engine; format unchanged recentlyReceivedAudio=\(recentlyReceivedAudio)")
+                } catch {
+                    logger.warning("Same-format audio engine restart failed — rebuilding: \(error.localizedDescription)")
+                    DiagnosticLogger.shared.write("audio", "Config change same-format restart failed; rebuilding error=\(error.localizedDescription)")
+                    return false
+                }
+            } else {
+                logger.info("Audio config change kept same input format — keeping recorder running")
+                DiagnosticLogger.shared.write("audio", "Config change ignored; format unchanged engineRunning=true recentlyReceivedAudio=\(recentlyReceivedAudio)")
+            }
+            return true
+        }
+
+        logger.warning(
+            "Audio config change requires rebuild (formatUnchanged=\(formatUnchanged, privacy: .public), recentlyReceivedAudio=\(recentlyReceivedAudio, privacy: .public))"
+        )
+        DiagnosticLogger.shared.write("audio", "Config change requires rebuild formatUnchanged=\(formatUnchanged) recentlyReceivedAudio=\(recentlyReceivedAudio)")
+        return false
+    }
+
     private func processBuffer(_ buffer: AVAudioPCMBuffer) {
+        lastAudioBufferAt = .now
+
         // Write to file
         do {
             try audioFile?.write(from: buffer)

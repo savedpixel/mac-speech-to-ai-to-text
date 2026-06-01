@@ -22,6 +22,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logger.info("Mac Speech to AI to Text launching")
+        DiagnosticLogger.shared.configure(enabled: settings.diagnosticFileLoggingEnabled)
+        DiagnosticLogger.shared.write("lifecycle", "App launching version=\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown") build=\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown")")
+        let signalPlayer = audioSignalPlayer
+        Task { @MainActor in
+            signalPlayer.preloadSounds()
+        }
 
         // Prune old recordings based on auto-delete setting
         historyStore.pruneOldRecordings(olderThanDays: settings.autoDeleteDays)
@@ -35,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         insertPhraseListener = InsertPhraseListener(settings: settings) { [weak self] in
-            self?.pipelineCoordinator.insertResult()
+            self?.pipelineCoordinator.insertResult(playConfirmationBeep: true)
         }
 
         pipelineCoordinator = PipelineCoordinator(
@@ -101,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // React to mic disconnect toggle — stop/start all mic-holding listeners
         settings.onMicDisconnectedChanged = { [weak self] disconnected in
             guard let self else { return }
+            DiagnosticLogger.shared.write("mic", "micDisconnected changed disconnected=\(disconnected) keepMicrophoneConnected=\(self.settings.keepMicrophoneConnected)")
             if disconnected {
                 self.logger.info("Mic disconnected by user — stopping all listeners")
                 self.wakePhraseListener.stopListening()
@@ -118,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settings.onMicrophoneChanged = { [weak self] _ in
             guard let self else { return }
             self.logger.info("Microphone changed — restarting listeners if running")
+            DiagnosticLogger.shared.write("mic", "Selected microphone changed id=\(self.settings.selectedMicrophoneID.isEmpty ? "system-default" : self.settings.selectedMicrophoneID)")
             if self.wakePhraseListener.isListening {
                 self.wakePhraseListener.stopListening()
                 self.wakePhraseListener.startListening()
@@ -130,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         Task {
             await permissionManager.checkAllPermissions()
+            DiagnosticLogger.shared.write("permissions", "Post-launch permissions accessibility=\(permissionManager.accessibilityGranted) microphone=\(permissionManager.microphoneGranted) speech=\(permissionManager.speechRecognitionGranted) inputMonitoring=\(permissionManager.inputMonitoringGranted)")
 
             if permissionManager.microphoneGranted,
                settings.keepMicrophoneConnected,
@@ -138,9 +147,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 wakePhraseListener.startListening()
             }
 
-            await transcriptionEngine.loadModel()
-            await transcriptionEngine.fetchAvailableModels()
             transcriptionEngine.scanDownloadedModels()
+            await transcriptionEngine.fetchAvailableModels()
         }
 
         logger.info("Mac Speech to AI to Text launched successfully")
@@ -166,6 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         logger.info("Mac Speech to AI to Text terminating")
+        DiagnosticLogger.shared.write("lifecycle", "App terminating")
         wakePhraseListener?.stopListening()
     }
 }
