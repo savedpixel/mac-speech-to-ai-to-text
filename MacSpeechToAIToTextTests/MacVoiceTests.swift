@@ -555,3 +555,41 @@ struct SettingsProviderTests {
         #expect(s.sendPhraseEnabled == true)
     }
 }
+
+// MARK: - TranscriptionCleaner Response Parsing Tests
+
+@Suite("TranscriptionCleaner Response Parsing Tests")
+struct TranscriptionCleanerResponseParsingTests {
+    @Test("Parses OpenAI-compatible string content")
+    func parsesStringContent() throws {
+        let data = #"{"choices":[{"message":{"role":"assistant","content":"Cleaned text"}}]}"#.data(using: .utf8)!
+        let content = try TranscriptionCleaner.extractAssistantContent(from: data)
+        #expect(content == "Cleaned text")
+    }
+
+    @Test("Parses array text content")
+    func parsesArrayTextContent() throws {
+        let data = #"{"choices":[{"message":{"role":"assistant","content":[{"type":"text","text":"Part one "},{"type":"text","text":"part two"}]}}]}"#.data(using: .utf8)!
+        let content = try TranscriptionCleaner.extractAssistantContent(from: data)
+        #expect(content == "Part one part two")
+    }
+
+    @Test("Extracts provider error messages")
+    func extractsProviderError() {
+        let data = #"{"error":{"message":"Authentication failed","type":"authentication_error","code":"invalid_api_key"}}"#.data(using: .utf8)!
+        let message = TranscriptionCleaner.extractProviderErrorMessage(from: data)
+        #expect(message?.contains("Authentication failed") == true)
+        #expect(message?.contains("invalid_api_key") == true)
+    }
+
+    @Test("Invalid JSON reports invalid response")
+    func invalidJSONThrows() throws {
+        let data = Data("not json".utf8)
+        do {
+            _ = try TranscriptionCleaner.extractAssistantContent(from: data)
+            Issue.record("Expected invalid response error")
+        } catch let error as TranscriptionCleaner.CleanerError {
+            #expect(error.localizedDescription.contains("response was not JSON"))
+        }
+    }
+}

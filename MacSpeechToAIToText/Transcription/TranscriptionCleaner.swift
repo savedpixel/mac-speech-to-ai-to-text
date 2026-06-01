@@ -2,24 +2,42 @@ import Foundation
 import os
 
 actor TranscriptionCleaner {
+    private static let urlSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.waitsForConnectivity = false
+        configuration.timeoutIntervalForRequest = 20
+        configuration.timeoutIntervalForResource = 30
+        configuration.httpMaximumConnectionsPerHost = 4
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: configuration)
+    }()
+
     private let logger = Logger(subsystem: "com.macvoice.app", category: "transcription")
     private let settings: Settings
     private let promptStore: PromptStore
 
-    enum CleanerError: Error, LocalizedError {
+    enum CleanerError: Error, LocalizedError, Equatable {
         case disabled
         case noAPIKey
-        case networkError(Error)
-        case invalidResponse
+        case networkError(String)
+        case apiError(statusCode: Int, message: String)
+        case invalidResponse(String)
         case timeout
 
         var errorDescription: String? {
             switch self {
-            case .disabled: return "AI cleanup is disabled"
-            case .noAPIKey: return "No API key configured"
-            case .networkError(let error): return "Network error: \(error.localizedDescription)"
-            case .invalidResponse: return "Invalid API response"
-            case .timeout: return "API request timed out"
+            case .disabled:
+                return "AI cleanup is disabled"
+            case .noAPIKey:
+                return "No API key configured"
+            case .networkError(let message):
+                return "Network error: \(message)"
+            case .apiError(let statusCode, let message):
+                return "API error \(statusCode): \(message)"
+            case .invalidResponse(let reason):
+                return "Invalid API response: \(reason)"
+            case .timeout:
+                return "API request timed out"
             }
         }
     }
@@ -37,120 +55,211 @@ actor TranscriptionCleaner {
 
         let endpoint = settings.resolvedEndpoint
         let model = settings.resolvedModel
+        let provider = settings.aiCleanupProvider
 
-        // Use override prompt if provided; fall back to selected prompt
         let resolvedPrompt: CleanupPrompt
         if let promptID, let found = promptStore.prompts.first(where: { $0.id == promptID }) {
             resolvedPrompt = found
         } else {
             resolvedPrompt = promptStore.selectedPrompt
         }
-        let systemPrompt = resolvedPrompt.systemPrompt
 
-        guard let url = URL(string: endpoint) else { throw CleanerError.invalidResponse }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 15
-
-        let body: [String: Any] = [
-            "model": model,
-            "messages": [
-                ["role": "system", "content": systemPrompt],
+        let data = try await sendChatCompletion(
+            endpoint: endpoint,
+            apiKey: apiKey,
+            provider: provider,
+            model: model,
+            messages: [
+                ["role": "system", "content": resolvedPrompt.systemPrompt],
                 ["role": "user", "content": text],
             ],
-            "temperature": 0.3,
-            "max_tokens": 2048,
-        ]
+            maxTokens: Self.maxResponseTokens(forInputCharacterCount: text.count),
+            purpose: "cleanup"
+        )
 
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await URLSession.shared.data(for: request)
-        } catch let error as URLError where error.code == .timedOut {
-            throw CleanerError.timeout
-        } catch {
-            throw CleanerError.networkError(error)
+        let cleaned = try Self.extractAssistantContent(from: data).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else {
+            throw CleanerError.invalidResponse("provider returned an empty assistant message")
         }
 
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            logger.error("API returned non-success status")
-            throw CleanerError.invalidResponse
-        }
-
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let firstChoice = choices.first,
-              let message = firstChoice["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            throw CleanerError.invalidResponse
-        }
-
-        let cleaned = content.trimmingCharacters(in: .whitespacesAndNewlines)
         logger.info("AI cleanup complete: \(text.count) → \(cleaned.count) chars")
+        DiagnosticLogger.shared.write("ai-cleanup", "Cleanup complete provider=\(provider.displayName) model=\(model) inputChars=\(text.count) outputChars=\(cleaned.count)")
         return cleaned
     }
 
-    func testAPIKey() async -> Result<String, CleanerError> {
-        let apiKey = settings.aiCleanupAPIKey
+    func testAPIKey(apiKey overrideAPIKey: String? = nil) async -> Result<String, CleanerError> {
+        let apiKey = (overrideAPIKey ?? settings.aiCleanupAPIKey).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !apiKey.isEmpty else { return .failure(.noAPIKey) }
 
-        let endpoint = settings.resolvedEndpoint
-        let model = settings.resolvedModel
+        do {
+            let data = try await sendChatCompletion(
+                endpoint: settings.resolvedEndpoint,
+                apiKey: apiKey,
+                provider: settings.aiCleanupProvider,
+                model: settings.resolvedModel,
+                messages: [["role": "user", "content": "Reply with OK only."]],
+                maxTokens: 8,
+                purpose: "test"
+            )
+            let content = try Self.extractAssistantContent(from: data)
+            let preview = String(content.prefix(50)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return .success(preview.isEmpty ? "OK" : preview)
+        } catch let error as CleanerError {
+            return .failure(error)
+        } catch {
+            return .failure(.networkError(error.localizedDescription))
+        }
+    }
 
-        guard !endpoint.isEmpty, let url = URL(string: endpoint) else {
-            return .failure(.invalidResponse)
+    private func sendChatCompletion(
+        endpoint: String,
+        apiKey: String,
+        provider: AIProvider,
+        model: String,
+        messages: [[String: String]],
+        maxTokens: Int,
+        purpose: String
+    ) async throws -> Data {
+        guard !endpoint.isEmpty, let url = URL(string: endpoint), let scheme = url.scheme, scheme.hasPrefix("http") else {
+            throw CleanerError.invalidResponse("invalid endpoint URL")
+        }
+        guard !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw CleanerError.invalidResponse("missing model name")
         }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 15
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 20
 
         let body: [String: Any] = [
             "model": model,
-            "messages": [
-                ["role": "user", "content": "Hi"],
-            ],
-            "max_tokens": 5,
+            "messages": messages,
+            "temperature": 0.2,
+            "max_tokens": maxTokens,
+            "stream": false,
         ]
-
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         } catch {
-            return .failure(.networkError(error))
+            throw CleanerError.invalidResponse("request body could not be encoded")
         }
+
+        let started = Date()
+        DiagnosticLogger.shared.write("ai-cleanup", "Request started purpose=\(purpose) provider=\(provider.displayName) model=\(model) maxTokens=\(maxTokens) endpointHost=\(url.host ?? "unknown")")
 
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await Self.urlSession.data(for: request)
         } catch let error as URLError where error.code == .timedOut {
-            return .failure(.timeout)
+            DiagnosticLogger.shared.write("ai-cleanup", "Request timed out purpose=\(purpose) provider=\(provider.displayName) elapsedMs=\(Self.elapsedMilliseconds(since: started))")
+            throw CleanerError.timeout
         } catch {
-            return .failure(.networkError(error))
+            DiagnosticLogger.shared.write("ai-cleanup", "Request network failure purpose=\(purpose) provider=\(provider.displayName) error=\(error.localizedDescription)")
+            throw CleanerError.networkError(error.localizedDescription)
         }
 
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            return .failure(.invalidResponse)
+        let elapsed = Self.elapsedMilliseconds(since: started)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw CleanerError.invalidResponse("missing HTTP response")
         }
 
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let firstChoice = choices.first,
-              let message = firstChoice["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            return .failure(.invalidResponse)
+        DiagnosticLogger.shared.write("ai-cleanup", "Response received purpose=\(purpose) provider=\(provider.displayName) status=\(httpResponse.statusCode) bytes=\(data.count) elapsedMs=\(elapsed)")
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let message = Self.extractProviderErrorMessage(from: data) ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+            logger.error("AI provider returned status \(httpResponse.statusCode, privacy: .public): \(message, privacy: .public)")
+            throw CleanerError.apiError(statusCode: httpResponse.statusCode, message: message)
         }
 
-        let preview = String(content.prefix(50)).trimmingCharacters(in: .whitespacesAndNewlines)
-        return .success(preview)
+        return data
+    }
+
+    static func extractAssistantContent(from data: Data) throws -> String {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw CleanerError.invalidResponse("response was not JSON")
+        }
+
+        if let providerError = extractProviderErrorMessage(fromJSONObject: json) {
+            throw CleanerError.invalidResponse(providerError)
+        }
+
+        guard let choices = json["choices"] as? [[String: Any]], !choices.isEmpty else {
+            throw CleanerError.invalidResponse("response did not include choices")
+        }
+
+        for choice in choices {
+            if let message = choice["message"] as? [String: Any],
+               let content = extractTextContent(from: message["content"]) {
+                return content
+            }
+
+            if let text = choice["text"] as? String {
+                return text
+            }
+
+            if let delta = choice["delta"] as? [String: Any],
+               let content = extractTextContent(from: delta["content"]) {
+                return content
+            }
+        }
+
+        throw CleanerError.invalidResponse("choices did not include assistant content")
+    }
+
+    static func extractProviderErrorMessage(from data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            let body = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return body?.isEmpty == false ? String(body!.prefix(240)) : nil
+        }
+        return extractProviderErrorMessage(fromJSONObject: json)
+    }
+
+    private static func extractProviderErrorMessage(fromJSONObject json: [String: Any]) -> String? {
+        if let error = json["error"] as? [String: Any] {
+            let message = (error["message"] as? String) ?? (error["error"] as? String) ?? "provider returned an error"
+            let code = (error["code"] as? String) ?? (error["type"] as? String)
+            if let code, !code.isEmpty {
+                return "\(message) (\(code))"
+            }
+            return message
+        }
+
+        if let message = json["message"] as? String, !message.isEmpty {
+            return message
+        }
+
+        return nil
+    }
+
+    private static func extractTextContent(from value: Any?) -> String? {
+        if let string = value as? String {
+            return string
+        }
+
+        if let parts = value as? [[String: Any]] {
+            let text = parts.compactMap { part -> String? in
+                if let text = part["text"] as? String { return text }
+                if let text = part["content"] as? String { return text }
+                return nil
+            }.joined()
+            return text.isEmpty ? nil : text
+        }
+
+        return nil
+    }
+
+    private static func maxResponseTokens(forInputCharacterCount characterCount: Int) -> Int {
+        // Short cleanup/translation/extraction prompts do not need the old 2048-token ceiling.
+        // Keep the cap high enough for longer translation-style prompts while cutting latency on common short dictations.
+        let estimatedOutputTokens = Int(Double(characterCount) / 2.8) + 160
+        return min(2048, max(384, estimatedOutputTokens))
+    }
+
+    private static func elapsedMilliseconds(since start: Date) -> Int {
+        Int(Date().timeIntervalSince(start) * 1000)
     }
 }

@@ -54,18 +54,45 @@ struct HistoryContentView: View {
     @State private var selectedSection: HistorySection = .all
     @State private var selectedRecord: TranscriptionRecord?
     @State private var selectedPromptID: UUID?
+    @State private var nestedColumnVisibility: NavigationSplitViewVisibility = .all
 
     private var hasFailedRecords: Bool { !historyStore.failedRecords.isEmpty }
     private var folderIDs: Set<UUID> { Set(historyStore.folders.map(\.id)) }
+    private var appVersionDisplay: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+        let build = info?["CFBundleVersion"] as? String ?? "0"
+        return "v\(version) (\(build))"
+    }
 
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
+            primarySidebar
+                .frame(width: 210)
+
+            Divider()
+
+            detailContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onAppear {
+            nestedColumnVisibility = .all
+            normalizeSelectedSection()
+        }
+        .onChange(of: hasFailedRecords) { _, _ in normalizeSelectedSection() }
+        .onChange(of: folderIDs) { _, _ in normalizeSelectedSection() }
+    }
+
+    private var primarySidebar: some View {
+        VStack(spacing: 0) {
             List(selection: $selectedSection) {
                 Section("App") {
                     Label("Prompts", systemImage: "text.quote")
                         .tag(HistorySection.prompts)
+                    Label("Settings", systemImage: "gear")
+                        .tag(HistorySection.settings)
                 }
-                
+
                 Section("Library") {
                     Label("All", systemImage: "tray.full")
                         .tag(HistorySection.all)
@@ -103,91 +130,83 @@ struct HistoryContentView: View {
                     }
                 }
             }
-            .safeAreaInset(edge: .bottom) {
-                VStack(spacing: 0) {
-                    Divider()
-                    Button(action: {
-                        selectedSection = .settings
-                    }) {
-                        HStack {
-                            Image(systemName: "gear")
-                                .frame(width: 16)
-                            Text("Settings")
-                            Spacer()
-                        }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 12)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.vertical, 8)
-                    .background(selectedSection == .settings ? Color.accentColor.opacity(0.15) : Color.clear)
-                    .cornerRadius(6)
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 8)
-                }
-                .background(.background)
+            .listStyle(.sidebar)
+
+            Divider()
+
+            Text(appVersionDisplay)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 2)
+                .accessibilityLabel("App version \(appVersionDisplay)")
+
+            Button(action: addFolder) {
+                Label("New Folder", systemImage: "folder.badge.plus")
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .navigationSplitViewColumnWidth(min: 170, ideal: 190)
-            .onAppear(perform: normalizeSelectedSection)
-            .onChange(of: hasFailedRecords) { _, _ in normalizeSelectedSection() }
-            .onChange(of: folderIDs) { _, _ in normalizeSelectedSection() }
-            .toolbar {
-                ToolbarItem {
-                    Button(action: addFolder) {
-                        Image(systemName: "folder.badge.plus")
-                    }
-                    .help("New Folder")
-                }
-            }
-        } detail: {
-            switch selectedSection {
-            case .all, .unfiled, .folder, .archive, .failed:
-                NavigationSplitView {
-                    HistoryListView(
-                        historyStore: historyStore,
-                        section: selectedSection,
-                        selectedRecord: $selectedRecord
-                    )
-                    .navigationSplitViewColumnWidth(min: 220, ideal: 280)
-                } detail: {
-                    if let record = selectedRecord {
-                        HistoryDetailView(
-                            record: record,
-                            historyStore: historyStore,
-                            audioPlayer: audioPlayer,
-                            transcriptionEngine: transcriptionEngine,
-                            transcriptionCleaner: transcriptionCleaner,
-                            promptStore: promptStore,
-                            settings: settings
-                        )
-                        .id(record.id)
-                    } else {
-                        ContentUnavailableView("Select a Transcription", systemImage: "text.bubble", description: Text("Choose a transcription from the list to view details."))
-                    }
-                }
-            case .prompts:
-                NavigationSplitView {
-                    PromptListView(promptStore: promptStore, selectedPromptID: $selectedPromptID)
-                        .navigationSplitViewColumnWidth(min: 240, ideal: 300)
-                } detail: {
-                    if let id = selectedPromptID,
-                       let prompt = promptStore.prompts.first(where: { $0.id == id }) {
-                        PromptEditorView(prompt: prompt, promptStore: promptStore)
-                    } else {
-                        ContentUnavailableView("Select a Prompt", systemImage: "text.quote", description: Text("Choose a prompt to edit."))
-                    }
-                }
-            case .settings:
-                SettingsContentView(
-                    settings: settings,
-                    permissionManager: permissionManager,
-                    transcriptionCleaner: transcriptionCleaner,
-                    transcriptionEngine: transcriptionEngine,
-                    promptStore: promptStore,
-                    audioSignalPlayer: audioSignalPlayer
+            .buttonStyle(.plain)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @ViewBuilder private var detailContent: some View {
+        switch selectedSection {
+        case .all, .unfiled, .folder, .archive, .failed:
+            NavigationSplitView(columnVisibility: $nestedColumnVisibility) {
+                HistoryListView(
+                    historyStore: historyStore,
+                    section: selectedSection,
+                    selectedRecord: $selectedRecord
                 )
+                .navigationSplitViewColumnWidth(min: 220, ideal: 280)
+                .onAppear {
+                    nestedColumnVisibility = .all
+                }
+            } detail: {
+                if let record = selectedRecord {
+                    HistoryDetailView(
+                        record: record,
+                        historyStore: historyStore,
+                        audioPlayer: audioPlayer,
+                        transcriptionEngine: transcriptionEngine,
+                        transcriptionCleaner: transcriptionCleaner,
+                        promptStore: promptStore,
+                        settings: settings
+                    )
+                    .id(record.id)
+                } else {
+                    ContentUnavailableView("Select a Transcription", systemImage: "text.bubble", description: Text("Choose a transcription from the list to view details."))
+                }
             }
+        case .prompts:
+            NavigationSplitView(columnVisibility: $nestedColumnVisibility) {
+                PromptListView(promptStore: promptStore, selectedPromptID: $selectedPromptID)
+                    .navigationSplitViewColumnWidth(min: 240, ideal: 300)
+                    .onAppear {
+                        nestedColumnVisibility = .all
+                    }
+            } detail: {
+                if let id = selectedPromptID,
+                   let prompt = promptStore.prompts.first(where: { $0.id == id }) {
+                    PromptEditorView(prompt: prompt, promptStore: promptStore)
+                } else {
+                    ContentUnavailableView("Select a Prompt", systemImage: "text.quote", description: Text("Choose a prompt to edit."))
+                }
+            }
+        case .settings:
+            SettingsContentView(
+                settings: settings,
+                permissionManager: permissionManager,
+                transcriptionCleaner: transcriptionCleaner,
+                transcriptionEngine: transcriptionEngine,
+                promptStore: promptStore,
+                audioSignalPlayer: audioSignalPlayer
+            )
         }
     }
 
@@ -253,6 +272,7 @@ struct SettingsContentView: View {
     @State private var savedTimer: Timer?
     @State private var testState: TestConnectionState = .idle
     @State private var microphones: [MicrophoneOption] = []
+    @State private var pendingDownloadModel: String = ""
     @State private var didAppear = false
 
     private enum TestConnectionState {
@@ -268,11 +288,11 @@ struct SettingsContentView: View {
                 voiceInputSection
                 shortcutsSection
                 soundSection
+                diagnosticsSection
                 transcriptionSection
                 aiCleanupSection
                 mediaSection
                 overlaySection
-                downloadedModelsSection
                 storageSection
                 permissionsSection
             }
@@ -305,6 +325,7 @@ struct SettingsContentView: View {
         .onChange(of: settings.aiCleanupEnabled) { _, _ in flashSaved() }
         .onChange(of: settings.aiCleanupProvider) { _, _ in flashSaved() }
         .onChange(of: settings.aiCleanupModelID) { _, _ in flashSaved() }
+        .onChange(of: settings.diagnosticFileLoggingEnabled) { _, _ in flashSaved() }
         .onChange(of: settings.soundPreset) { oldValue, newValue in
             guard didAppear, oldValue != newValue else { return }
             flashSaved()
@@ -312,7 +333,11 @@ struct SettingsContentView: View {
         }
         .onAppear {
             refreshMicrophones()
+            syncPendingDownloadModel()
             didAppear = true
+        }
+        .onChange(of: transcriptionEngine.availableModels) { _, _ in
+            syncPendingDownloadModel()
         }
     }
 
@@ -429,33 +454,60 @@ struct SettingsContentView: View {
         }
     }
 
+    @ViewBuilder private var diagnosticsSection: some View {
+        Section("Diagnostics") {
+            Toggle("Diagnostic File Logging", isOn: $settings.diagnosticFileLoggingEnabled)
+
+            Text("When enabled, MacVoice writes microphone startup, shortcut, permission, and pipeline events to a local diagnostic file.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            LabeledContent("Current Log:") {
+                Text(DiagnosticLogger.currentLogFileURL.path)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+
+            HStack {
+                Button("Reveal Log File") {
+                    revealDiagnosticLogFile()
+                }
+                .buttonStyle(.bordered)
+
+                Button("Copy Log Path") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(DiagnosticLogger.currentLogFileURL.path, forType: .string)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
     @ViewBuilder private var transcriptionSection: some View {
         Section("Transcription") {
-            Picker("Whisper Model:", selection: $settings.whisperModel) {
-                if transcriptionEngine.availableModels.isEmpty {
-                    ForEach(Settings.fallbackModels, id: \.self) { model in
-                        Text(Settings.whisperModelDisplayName(model)).tag(model)
-                    }
-                } else {
-                    ForEach(transcriptionEngine.availableModels, id: \.self) { model in
-                        Text(Settings.whisperModelDisplayName(model)).tag(model)
-                    }
-                }
-            }
-            .onChange(of: settings.whisperModel) { _, _ in
-                Task { await transcriptionEngine.reloadModel() }
+            LabeledContent("Active Model:") {
+                Text(Settings.whisperModelDisplayName(settings.whisperModel))
             }
 
             HStack(spacing: 8) {
                 switch transcriptionEngine.modelState {
                 case .notLoaded:
-                    Label("Model not loaded", systemImage: "circle.dashed")
+                    Label("Selected model not prepared", systemImage: "circle.dashed")
                         .foregroundStyle(.secondary)
                         .font(.caption)
-                case .loading:
+                case .preparingLocal:
                     ProgressView()
                         .controlSize(.small)
-                    Text("Downloading & loading model…")
+                    Text("Preparing local model…")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                case .downloading:
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Downloading selected model…")
                         .foregroundStyle(.secondary)
                         .font(.caption)
                 case .loaded:
@@ -468,6 +520,163 @@ struct SettingsContentView: View {
                         .font(.caption)
                 }
             }
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Model Storage:")
+                    Text(settings.modelStoragePath.isEmpty ? "Default (~/Documents/huggingface/)" : settings.modelStoragePath)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                Button("Choose…") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseFiles = false
+                    panel.canChooseDirectories = true
+                    panel.canCreateDirectories = true
+                    panel.allowsMultipleSelection = false
+                    panel.prompt = "Select"
+                    panel.message = "Choose where Whisper models are stored"
+                    if panel.runModal() == .OK, let url = panel.url {
+                        settings.modelStoragePath = url.path
+                    }
+                }
+                if !settings.modelStoragePath.isEmpty {
+                    Button("Reset") {
+                        settings.modelStoragePath = ""
+                    }
+                    .foregroundStyle(.secondary)
+                }
+            }
+
+            Divider()
+
+            if transcriptionEngine.downloadedModels.isEmpty {
+                Text("No models downloaded")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            } else {
+                let totalSize = transcriptionEngine.downloadedModels.reduce(Int64(0)) { $0 + $1.sizeBytes }
+                Text("Downloaded Models — \(ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(transcriptionEngine.downloadedModels) { model in
+                    let isSelected = transcriptionEngine.isSelectedModel(model.name)
+                    let isLoaded = transcriptionEngine.isLoadedModel(model.name)
+
+                    HStack {
+                        Text(Settings.whisperModelDisplayName(model.name))
+                        Spacer()
+                        Text(ByteCountFormatter.string(fromByteCount: model.sizeBytes, countStyle: .file))
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                        if isSelected {
+                            Text(selectedDownloadedModelStatusLabel(isLoaded: isLoaded))
+                                .foregroundStyle(selectedDownloadedModelStatusColor(isLoaded: isLoaded))
+                                .font(.caption)
+                        } else {
+                            Button("Use") {
+                                transcriptionEngine.selectModel(model.name)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        Button("Delete", role: .destructive) {
+                            try? transcriptionEngine.deleteModel(model.name)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(isSelected)
+                    }
+                }
+            }
+
+            let availableModelsToDownload = transcriptionEngine.availableModelsToDownload()
+            if !availableModelsToDownload.isEmpty {
+                Divider()
+
+                HStack {
+                    Picker("Download New Model:", selection: pendingDownloadModelBinding(options: availableModelsToDownload)) {
+                        ForEach(availableModelsToDownload, id: \.self) { model in
+                            Text(Settings.whisperModelDisplayName(model)).tag(model)
+                        }
+                    }
+
+                    Button("Download & Use") {
+                        let modelName = pendingDownloadModelBinding(options: availableModelsToDownload).wrappedValue
+                        guard !modelName.isEmpty else { return }
+                        Task { await transcriptionEngine.loadModel(modelName) }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+
+            Button("Refresh") {
+                transcriptionEngine.scanDownloadedModels()
+                syncPendingDownloadModel()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+    }
+
+    private func pendingDownloadModelBinding(options: [String]) -> Binding<String> {
+        Binding(
+            get: {
+                if options.contains(pendingDownloadModel) {
+                    return pendingDownloadModel
+                }
+                return options.first ?? ""
+            },
+            set: { pendingDownloadModel = $0 }
+        )
+    }
+
+    private func syncPendingDownloadModel() {
+        let options = transcriptionEngine.availableModelsToDownload()
+        guard let firstOption = options.first else {
+            pendingDownloadModel = ""
+            return
+        }
+
+        if !options.contains(pendingDownloadModel) {
+            pendingDownloadModel = firstOption
+        }
+    }
+
+    private func selectedDownloadedModelStatusLabel(isLoaded: Bool) -> String {
+        if isLoaded {
+            return "In Use"
+        }
+
+        switch transcriptionEngine.modelState {
+        case .preparingLocal:
+            return "Preparing"
+        case .downloading:
+            return "Downloading"
+        case .failed:
+            return "Needs Attention"
+        case .notLoaded:
+            return "Selected"
+        case .loaded:
+            return "In Use"
+        }
+    }
+
+    private func selectedDownloadedModelStatusColor(isLoaded: Bool) -> Color {
+        if isLoaded {
+            return .green
+        }
+
+        switch transcriptionEngine.modelState {
+        case .failed:
+            return .red
+        default:
+            return .secondary
         }
     }
 
@@ -499,14 +708,19 @@ struct SettingsContentView: View {
                     }
                 }
 
-                SecureField("API Key", text: $apiKeyText)
-                    .onAppear { apiKeyText = settings.aiCleanupAPIKey }
-                    .onChange(of: apiKeyText) { _, newValue in
-                        settings.aiCleanupAPIKey = newValue
-                    }
+                VStack(alignment: .leading, spacing: 6) {
+                    SecureField("Paste new API key to replace stored key", text: $apiKeyText)
+                        .textContentType(.password)
+                        .onSubmit { testConnection() }
+
+                    Text(apiKeyStatusText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.disabled)
+                }
 
                 HStack(spacing: 8) {
-                    Button("Test Connection") {
+                    Button(apiKeyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Test Connection" : "Save & Test Connection") {
                         testConnection()
                     }
                     .buttonStyle(.bordered)
@@ -561,41 +775,7 @@ struct SettingsContentView: View {
         }
     }
 
-    @ViewBuilder private var downloadedModelsSection: some View {
-        Section("Downloaded Models") {
-            if transcriptionEngine.downloadedModels.isEmpty {
-                Text("No models downloaded")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-            } else {
-                let totalSize = transcriptionEngine.downloadedModels.reduce(Int64(0)) { $0 + $1.sizeBytes }
-                Text("Total: \(ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
 
-                ForEach(transcriptionEngine.downloadedModels) { model in
-                    HStack {
-                        Text(Settings.whisperModelDisplayName(model.name))
-                        Spacer()
-                        Text(ByteCountFormatter.string(fromByteCount: model.sizeBytes, countStyle: .file))
-                            .foregroundStyle(.secondary)
-                            .font(.caption)
-                        Button("Delete", role: .destructive) {
-                            try? transcriptionEngine.deleteModel(model.name)
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    }
-                }
-            }
-
-            Button("Refresh") {
-                transcriptionEngine.scanDownloadedModels()
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-        }
-    }
 
     @ViewBuilder private var storageSection: some View {
         Section("Storage") {
@@ -651,19 +831,52 @@ struct SettingsContentView: View {
         }
     }
 
+    private var apiKeyStatusText: String {
+        let pending = apiKeyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !pending.isEmpty {
+            return "New key ready to save. It will replace the stored key when you test."
+        }
+
+        let saved = settings.aiCleanupAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !saved.isEmpty else {
+            return "No API key saved. Paste a key above, then choose Save & Test Connection."
+        }
+
+        return "Saved API key ending in …\(String(saved.suffix(4))). Paste a new key above to replace it."
+    }
+
     private func testConnection() {
+        let pastedKey = apiKeyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isTestingReplacementKey = !pastedKey.isEmpty
         testState = .testing
+
         Task {
-            let result = await transcriptionCleaner.testAPIKey()
+            let result = await transcriptionCleaner.testAPIKey(apiKey: isTestingReplacementKey ? pastedKey : nil)
             await MainActor.run {
                 switch result {
                 case .success(let preview):
-                    testState = .success(preview.isEmpty ? "Connected" : preview)
+                    if isTestingReplacementKey {
+                        settings.aiCleanupAPIKey = pastedKey
+                        apiKeyText = ""
+                        flashSaved()
+                    }
+                    let message = preview.isEmpty ? "Connected" : preview
+                    testState = .success(isTestingReplacementKey ? "Saved & connected: \(message)" : message)
                 case .failure(let error):
-                    testState = .failure(error.localizedDescription)
+                    let prefix = isTestingReplacementKey ? "New pasted key failed: " : ""
+                    testState = .failure(prefix + error.localizedDescription)
                 }
             }
         }
+    }
+
+    private func revealDiagnosticLogFile() {
+        let url = DiagnosticLogger.currentLogFileURL
+        try? FileManager.default.createDirectory(at: DiagnosticLogger.diagnosticsDirectory, withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try? Data().write(to: url)
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     private func permissionRow(title: String, granted: Bool, action: @escaping () -> Void) -> some View {
