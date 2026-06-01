@@ -12,6 +12,8 @@ Package.resolved
 
 # Build Output
 build/
+build/Models/
+.tmp/
 
 # Internal docs (agent observations, task tracking, planning)
 docs/
@@ -20,6 +22,7 @@ docs/
 .github/instructions/
 .github/prompts/
 AGENTS.md
+.agents/
 
 # Source assets
 app.png
@@ -30,6 +33,9 @@ generate-test.swift
 visibility_test.swift
 test_section.swift
 toggle_test.swift
+
+# Local config (signing identity, secrets)
+local.config
 
 # Misc
 icon.png

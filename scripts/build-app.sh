@@ -8,6 +8,17 @@ APP_NAME="Mac Speech to AI to Text"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 BUNDLE_ID="com.macvoice.app"
 EXECUTABLE_NAME="MacSpeechToAIToText"
+INFO_PLIST="$PROJECT_DIR/MacSpeechToAIToText/Info.plist"
+APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST")"
+APP_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO_PLIST")"
+
+# Load local config (signing identity etc.) — gitignored, never committed
+LOCAL_CONFIG="$PROJECT_DIR/local.config"
+if [ -f "$LOCAL_CONFIG" ]; then
+    source "$LOCAL_CONFIG"
+fi
+# SIGNING_IDENTITY can be set in local.config or as env var; defaults to ad-hoc
+SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 
 quit_running_app() {
     echo "🛑 Closing running app if needed..."
@@ -30,6 +41,9 @@ EOF
     echo "⚠️  App did not quit in time, forcing shutdown..."
     pkill -x "$APP_NAME" >/dev/null 2>&1 || true
     pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
+    pkill -f "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
+    # Kill legacy process name from before the rename
+    pkill -x "MacVoice" >/dev/null 2>&1 || true
     sleep 1
 }
 
@@ -72,9 +86,9 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${APP_BUILD}</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>${APP_VERSION}</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.utilities</string>
     <key>NSHumanReadableCopyright</key>
@@ -150,9 +164,13 @@ cat > "$ENTITLEMENTS" << EOF
 </plist>
 EOF
 
-# Code sign — ad-hoc signing for local development
-echo "🔏 Signing with ad-hoc identity"
-codesign --force --sign - \
+# Code sign
+if [ "$SIGNING_IDENTITY" = "-" ]; then
+    echo "🔏 Signing with ad-hoc identity"
+else
+    echo "🔏 Signing with: $SIGNING_IDENTITY"
+fi
+codesign --force --sign "$SIGNING_IDENTITY" \
     --entitlements "$ENTITLEMENTS" \
     "$APP_BUNDLE"
 
