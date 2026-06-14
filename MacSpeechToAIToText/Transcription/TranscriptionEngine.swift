@@ -235,37 +235,6 @@ final class TranscriptionEngine {
         return normalizeModelName(loadedModelName) == normalizeModelName(name) && isModelLoaded
     }
 
-    // MARK: - Sprint 1 Readiness (for Dashboard + ModelReadinessCard)
-
-    /// High-level readiness for the currently selected model, matching the exact states requested in the 2026-06-01 audit.
-    var selectedModelReadiness: ModelReadiness {
-        let isDownloaded = downloadedModels.contains { isSelectedModel($0.name) }
-
-        switch modelState {
-        case .loaded:
-            return .ready
-        case .preparingLocal, .downloading:
-            return .preparing
-        case .failed(let message):
-            if isDownloaded {
-                return .corruptOrNeedsRepair(message)
-            } else {
-                return .failedPreparation(message)
-            }
-        case .notLoaded:
-            if isDownloaded {
-                return .downloadedNotLoaded
-            } else {
-                return .notDownloaded
-            }
-        }
-    }
-
-    var isModelReadyForImmediateTranscription: Bool {
-        if case .ready = selectedModelReadiness { return true }
-        return false
-    }
-
     private func isReadyToTranscribe(modelName: String) -> Bool {
         guard let loadedModelName, whisperKit != nil else { return false }
         return isModelLoaded && normalizeModelName(loadedModelName) == normalizeModelName(modelName)
@@ -383,7 +352,7 @@ final class TranscriptionEngine {
                     downloadBase: self.downloadBaseURL,
                     modelFolder: localPath,
                     verbose: false,
-                    prewarm: settings.keepWhisperModelWarm
+                    prewarm: false
                 )
             } else {
                 // No local model — download via WhisperKit into configured directory
@@ -392,7 +361,7 @@ final class TranscriptionEngine {
                     model: "openai_whisper-\(modelName)",
                     downloadBase: self.downloadBaseURL,
                     verbose: false,
-                    prewarm: settings.keepWhisperModelWarm
+                    prewarm: false
                 )
             }
             whisperKit = try await WhisperKit(config)
@@ -422,7 +391,7 @@ final class TranscriptionEngine {
                         model: "openai_whisper-\(modelName)",
                         downloadBase: self.downloadBaseURL,
                         verbose: false,
-                        prewarm: settings.keepWhisperModelWarm
+                        prewarm: false
                     )
                     logger.info("Retry: downloading fresh model")
                     whisperKit = try await WhisperKit(retryConfig)
@@ -486,13 +455,7 @@ final class TranscriptionEngine {
 
     /// Transcribe audio from a file URL.
     func transcribe(audioFileURL: URL) async throws -> String {
-        let overallStart = Date()
-
-        // Phase 1: Model readiness (this is often the slow part on first use)
-        let modelStart = Date()
         try await ensureSelectedModelLoaded()
-        let modelLoadTime = Date().timeIntervalSince(modelStart)
-
         guard let whisperKit else { throw TranscriptionError.modelNotLoaded }
 
         isTranscribing = true
@@ -500,19 +463,7 @@ final class TranscriptionEngine {
 
         logger.info("Transcribing: \(audioFileURL.lastPathComponent)")
 
-        // Phase 2: Actual inference
-        let inferenceStart = Date()
         let results = try await whisperKit.transcribe(audioPath: audioFileURL.path)
-        let inferenceTime = Date().timeIntervalSince(inferenceStart)
-
-        let totalTime = Date().timeIntervalSince(overallStart)
-
-        let timingMessage = String(
-            format: "Transcription timing — modelWait: %.1fs, inference: %.1fs, total: %.1fs (model=%@)",
-            modelLoadTime, inferenceTime, totalTime, settings.whisperModel
-        )
-        logger.info("\(timingMessage)")
-        DiagnosticLogger.shared.write("transcription", timingMessage)
 
         let text = results
             .compactMap(\.text)
@@ -521,38 +472,6 @@ final class TranscriptionEngine {
 
         logger.info("Transcription complete: \(text.prefix(50))…")
         return text
-    }
-}
-
-// MARK: - Sprint 1 Model Readiness (exact states from the 2026-06-01 audit)
-enum ModelReadiness: Equatable {
-    case notDownloaded
-    case downloadedNotLoaded
-    case preparing
-    case ready
-    case failedPreparation(String)
-    case corruptOrNeedsRepair(String)
-
-    var displayText: String {
-        switch self {
-        case .notDownloaded:
-            return "Not downloaded"
-        case .downloadedNotLoaded:
-            return "Downloaded, not loaded"
-        case .preparing:
-            return "Preparing…"
-        case .ready:
-            return "Ready"
-        case .failedPreparation(let msg):
-            return "Failed preparation: \(msg)"
-        case .corruptOrNeedsRepair(let msg):
-            return "Corrupt / needs repair: \(msg)"
-        }
-    }
-
-    var isReady: Bool {
-        if case .ready = self { return true }
-        return false
     }
 }
 

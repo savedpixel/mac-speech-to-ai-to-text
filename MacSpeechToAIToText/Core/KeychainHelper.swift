@@ -9,25 +9,13 @@ enum KeychainHelper {
     static func save(key: String, value: String) -> Bool {
         guard let data = value.data(using: .utf8) else { return false }
 
-        let query: [String: Any] = [
+        // Delete existing item first
+        let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
         ]
-
-        let updateAttributes: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
-        ]
-
-        let updateStatus = SecItemUpdate(query as CFDictionary, updateAttributes as CFDictionary)
-        if updateStatus == errSecSuccess {
-            return true
-        }
-        if updateStatus != errSecItemNotFound {
-            logger.error("Keychain update failed for \(key): \(updateStatus)")
-            return false
-        }
+        SecItemDelete(deleteQuery as CFDictionary)
 
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,

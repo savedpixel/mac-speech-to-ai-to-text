@@ -13,7 +13,6 @@ final class Settings {
         static let sendPhrase = "sendPhrase"
         static let silenceThreshold = "silenceThreshold"
         static let whisperModel = "whisperModel"
-        static let keepWhisperModelWarm = "keepWhisperModelWarm"
         static let autoResumeMedia = "autoResumeMedia"
         static let shortcutKeyCode = "shortcutKeyCode"
         static let shortcutModifiers = "shortcutModifiers"
@@ -24,8 +23,6 @@ final class Settings {
         static let aiCleanupModelID = "aiCleanupModelID"
         static let aiCleanupCustomEndpoint = "aiCleanupCustomEndpoint"
         static let aiCleanupCustomModel = "aiCleanupCustomModel"
-        static let lastAIKeyTestDate = "lastAIKeyTestDate"
-        static let lastAIKeyTestMessage = "lastAIKeyTestMessage"
         static let autoDeleteDays = "autoDeleteDays"
         static let sendPhraseEnabled = "sendPhraseEnabled"
         static let autoInsertEnabled = "autoInsertEnabled"
@@ -85,13 +82,6 @@ final class Settings {
 
     var whisperModel: String {
         didSet { defaults.set(whisperModel, forKey: Key.whisperModel) }
-    }
-
-    /// When true, the selected Whisper model is pre-loaded / kept warm in the background
-    /// for near-instant first transcription after launch or model switch. Increases memory/CPU
-    /// usage slightly but dramatically improves perceived speed (recommended for most users).
-    var keepWhisperModelWarm: Bool {
-        didSet { defaults.set(keepWhisperModelWarm, forKey: Key.keepWhisperModelWarm) }
     }
 
     var autoResumeMedia: Bool {
@@ -214,48 +204,11 @@ final class Settings {
 
     var aiCleanupAPIKey: String {
         get { KeychainHelper.read(key: "aiCleanupAPIKey") ?? "" }
-        set { _ = saveAICleanupAPIKey(newValue) }
-    }
-
-    @discardableResult
-    func saveAICleanupAPIKey(_ newValue: String) -> Bool {
-        let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            return KeychainHelper.delete(key: "aiCleanupAPIKey")
-        }
-
-        let didSave = KeychainHelper.save(key: "aiCleanupAPIKey", value: trimmed)
-        guard didSave else { return false }
-        return KeychainHelper.read(key: "aiCleanupAPIKey") == trimmed
-    }
-
-    var aiCleanupAPIKeySuffix: String? {
-        let saved = aiCleanupAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !saved.isEmpty else { return nil }
-        return String(saved.suffix(4))
-    }
-
-    // Sprint 1: Last AI key test result for the connection card (computed - always backed by UserDefaults)
-    var lastAIKeyTestDate: Date? {
-        get {
-            defaults.object(forKey: Key.lastAIKeyTestDate) as? Date
-        }
         set {
-            if let date = newValue {
-                defaults.set(date, forKey: Key.lastAIKeyTestDate)
+            if newValue.isEmpty {
+                _ = KeychainHelper.delete(key: "aiCleanupAPIKey")
             } else {
-                defaults.removeObject(forKey: Key.lastAIKeyTestDate)
-            }
-        }
-    }
-
-    var lastAIKeyTestMessage: String? {
-        get { defaults.string(forKey: Key.lastAIKeyTestMessage) }
-        set {
-            if let msg = newValue {
-                defaults.set(msg, forKey: Key.lastAIKeyTestMessage)
-            } else {
-                defaults.removeObject(forKey: Key.lastAIKeyTestMessage)
+                _ = KeychainHelper.save(key: "aiCleanupAPIKey", value: newValue)
             }
         }
     }
@@ -351,7 +304,6 @@ final class Settings {
             Key.sendPhrase: "OK, send",
             Key.silenceThreshold: 2.0,
             Key.whisperModel: "tiny",
-            Key.keepWhisperModelWarm: true,
             Key.autoResumeMedia: true,
             Key.shortcutKeyCode: 9,   // V key
             Key.shortcutModifiers: Int(NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue),
@@ -362,8 +314,6 @@ final class Settings {
             Key.aiCleanupModelID: "gpt-4o-mini",
             Key.aiCleanupCustomEndpoint: "",
             Key.aiCleanupCustomModel: "",
-            Key.lastAIKeyTestDate: Date.distantPast,
-            Key.lastAIKeyTestMessage: "",
             Key.autoDeleteDays: 0,
             Key.sendPhraseEnabled: true,
             Key.autoInsertEnabled: false,
@@ -383,9 +333,6 @@ final class Settings {
         self.sendPhrase = defs.string(forKey: Key.sendPhrase) ?? "OK, send"
         self.silenceThreshold = defs.double(forKey: Key.silenceThreshold)
         self.whisperModel = defs.string(forKey: Key.whisperModel) ?? "tiny"
-        self.keepWhisperModelWarm = defs.object(forKey: Key.keepWhisperModelWarm) != nil
-            ? defs.bool(forKey: Key.keepWhisperModelWarm)
-            : true
         self.autoResumeMedia = defs.bool(forKey: Key.autoResumeMedia)
         self.shortcutKeyCode = UInt16(defs.integer(forKey: Key.shortcutKeyCode))
         self.shortcutModifiers = UInt(defs.integer(forKey: Key.shortcutModifiers))

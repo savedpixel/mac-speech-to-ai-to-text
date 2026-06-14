@@ -32,16 +32,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Prune old recordings based on auto-delete setting
         historyStore.pruneOldRecordings(olderThanDays: settings.autoDeleteDays)
 
-        // Warm the selected Whisper model in the background for fast first transcription
-        // (Sprint 1 speed improvement — controlled by keepWhisperModelWarm setting)
-        if settings.keepWhisperModelWarm {
-            Task(priority: .userInitiated) { [weak self] in
-                guard let self else { return }
-                self.logger.info("Warming selected Whisper model in background (keepWhisperModelWarm = true)")
-                await self.transcriptionEngine.loadModel()
-            }
-        }
-
         let audioRecorder = AudioRecorder(settings: settings)
         let mediaController = MediaController()
         let textInserter = TextInserter()

@@ -16,6 +16,7 @@ build/Models/
 .tmp/
 
 # Internal docs (agent observations, task tracking, planning)
+docs/
 
 # Copilot / Agent workflow files
 .github/instructions/
