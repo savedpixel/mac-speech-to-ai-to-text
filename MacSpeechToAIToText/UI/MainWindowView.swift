@@ -42,6 +42,8 @@ struct HistoryContentView: View {
     var audioSignalPlayer: AudioSignalPlayer
 
     enum HistorySection: Hashable {
+        case dashboard
+        case history          // explicit top-level for the library split view
         case all
         case unfiled
         case folder(UUID)
@@ -51,7 +53,7 @@ struct HistoryContentView: View {
         case settings
     }
 
-    @State private var selectedSection: HistorySection = .all
+    @State private var selectedSection: HistorySection = .dashboard
     @State private var selectedRecord: TranscriptionRecord?
     @State private var selectedPromptID: UUID?
     @State private var nestedColumnVisibility: NavigationSplitViewVisibility = .all
@@ -86,23 +88,50 @@ struct HistoryContentView: View {
     private var primarySidebar: some View {
         VStack(spacing: 0) {
             List(selection: $selectedSection) {
+                // App navigation (Sprint 1: clean top-level destinations, Dashboard first)
                 Section("App") {
+                    Label("Dashboard", systemImage: "gauge")
+                        .tag(HistorySection.dashboard)
+
+                    Label("History", systemImage: "tray.full")
+                        .tag(HistorySection.history)
+
                     Label("Prompts", systemImage: "text.quote")
                         .tag(HistorySection.prompts)
+
                     Label("Settings", systemImage: "gear")
                         .tag(HistorySection.settings)
                 }
 
+                // Library (no redirecting "All" that produced blank-row feelings; History is the canonical library surface)
                 Section("Library") {
                     Label("All", systemImage: "tray.full")
                         .tag(HistorySection.all)
                         .onDrop(of: [.plainText], isTargeted: nil) { providers in
                             handleDrop(providers, toFolder: nil, unarchive: true)
                         }
+
+                    Label("Archive", systemImage: "archivebox")
+                        .tag(HistorySection.archive)
+                        .onDrop(of: [.plainText], isTargeted: nil) { providers in
+                            handleDropToArchive(providers)
+                        }
+
+                    if hasFailedRecords {
+                        Label("Failed", systemImage: "exclamationmark.circle")
+                            .tag(HistorySection.failed)
+                    }
                 }
 
-                if !historyStore.folders.isEmpty {
-                    Section("Folders") {
+                // Folders — always one consistent section. + button lives only in the header (no duplicate full-row "New Folder" button, no blank selectable rows)
+                Section {
+                    if historyStore.folders.isEmpty {
+                        Text("No folders yet")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 2)
+                    } else {
                         ForEach(historyStore.folders) { folder in
                             Label(folder.name, systemImage: "folder")
                                 .tag(HistorySection.folder(folder.id))
@@ -116,17 +145,18 @@ struct HistoryContentView: View {
                                 }
                         }
                     }
-                }
-
-                Section {
-                    Label("Archive", systemImage: "archivebox")
-                        .tag(HistorySection.archive)
-                        .onDrop(of: [.plainText], isTargeted: nil) { providers in
-                            handleDropToArchive(providers)
+                } header: {
+                    HStack {
+                        Text("Folders")
+                        Spacer()
+                        Button(action: addFolder) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 13))
                         }
-                    if hasFailedRecords {
-                        Label("Failed", systemImage: "exclamationmark.circle")
-                            .tag(HistorySection.failed)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("New Folder")
+                        .accessibilityLabel("New Folder")
                     }
                 }
             }
@@ -134,6 +164,7 @@ struct HistoryContentView: View {
 
             Divider()
 
+            // Version footer preserved per guardrail (visible confirmation of rebuilt binaries)
             Text(appVersionDisplay)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -142,21 +173,25 @@ struct HistoryContentView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 2)
                 .accessibilityLabel("App version \(appVersionDisplay)")
-
-            Button(action: addFolder) {
-                Label("New Folder", systemImage: "folder.badge.plus")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
         }
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
     @ViewBuilder private var detailContent: some View {
         switch selectedSection {
-        case .all, .unfiled, .folder, .archive, .failed:
+        case .dashboard:
+            DashboardView(
+                historyStore: historyStore,
+                settings: settings,
+                permissionManager: permissionManager,
+                transcriptionEngine: transcriptionEngine,
+                transcriptionCleaner: transcriptionCleaner,
+                promptStore: promptStore,
+                audioSignalPlayer: audioSignalPlayer
+            )
+
+        case .history, .all, .unfiled, .folder, .archive, .failed:
+            // History top-level (or legacy filters) → the existing list + detail split
             NavigationSplitView(columnVisibility: $nestedColumnVisibility) {
                 HistoryListView(
                     historyStore: historyStore,
@@ -183,6 +218,7 @@ struct HistoryContentView: View {
                     ContentUnavailableView("Select a Transcription", systemImage: "text.bubble", description: Text("Choose a transcription from the list to view details."))
                 }
             }
+
         case .prompts:
             NavigationSplitView(columnVisibility: $nestedColumnVisibility) {
                 PromptListView(promptStore: promptStore, selectedPromptID: $selectedPromptID)
@@ -198,6 +234,7 @@ struct HistoryContentView: View {
                     ContentUnavailableView("Select a Prompt", systemImage: "text.quote", description: Text("Choose a prompt to edit."))
                 }
             }
+
         case .settings:
             SettingsContentView(
                 settings: settings,
@@ -217,11 +254,13 @@ struct HistoryContentView: View {
     private func normalizeSelectedSection() {
         switch selectedSection {
         case .unfiled:
-            selectedSection = .all
+            selectedSection = .history   // or .all; history top-level is the canonical library view
         case .failed where !hasFailedRecords:
-            selectedSection = .all
+            selectedSection = .history
         case .folder(let id) where !folderIDs.contains(id):
-            selectedSection = .all
+            selectedSection = .history
+        case .all:
+            selectedSection = .history   // surface the explicit History entry
         default:
             break
         }
@@ -492,34 +531,14 @@ struct SettingsContentView: View {
                 Text(Settings.whisperModelDisplayName(settings.whisperModel))
             }
 
-            HStack(spacing: 8) {
-                switch transcriptionEngine.modelState {
-                case .notLoaded:
-                    Label("Selected model not prepared", systemImage: "circle.dashed")
-                        .foregroundStyle(.secondary)
-                        .font(.caption)
-                case .preparingLocal:
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Preparing local model…")
-                        .foregroundStyle(.secondary)
-                        .font(.caption)
-                case .downloading:
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Downloading selected model…")
-                        .foregroundStyle(.secondary)
-                        .font(.caption)
-                case .loaded:
-                    Label("Model ready", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                        .font(.caption)
-                case .failed(let msg):
-                    Label(msg, systemImage: "xmark.circle.fill")
-                        .foregroundStyle(.red)
-                        .font(.caption)
-                }
-            }
+            Toggle("Keep model warm for fast first transcription", isOn: $settings.keepWhisperModelWarm)
+                .font(.subheadline)
+
+            ModelReadinessCard(
+                transcriptionEngine: transcriptionEngine,
+                settings: settings
+            )
+            .padding(.vertical, 4)
 
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -684,6 +703,14 @@ struct SettingsContentView: View {
         Section("AI Cleanup") {
             Toggle("Enable AI Cleanup", isOn: $settings.aiCleanupEnabled)
 
+            // Nice summary card (Phase 3) — with full key replacement support
+            AIConnectionCard(
+                settings: settings,
+                transcriptionCleaner: transcriptionCleaner,
+                showKeyReplacementField: true
+            )
+
+            // Advanced controls (kept for provider/model/key replacement)
             if settings.aiCleanupEnabled {
                 Picker("Provider:", selection: $settings.aiCleanupProvider) {
                     ForEach(AIProvider.allCases) { provider in
@@ -708,43 +735,8 @@ struct SettingsContentView: View {
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    SecureField("Paste new API key to replace stored key", text: $apiKeyText)
-                        .textContentType(.password)
-                        .onSubmit { testConnection() }
-
-                    Text(apiKeyStatusText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.disabled)
-                }
-
-                HStack(spacing: 8) {
-                    Button(apiKeyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Test Connection" : "Save & Test Connection") {
-                        testConnection()
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled({
-                        if case .testing = testState { return true }
-                        return false
-                    }())
-
-                    switch testState {
-                    case .idle:
-                        EmptyView()
-                    case .testing:
-                        ProgressView()
-                            .controlSize(.small)
-                    case .success(let msg):
-                        Label(msg, systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                            .font(.caption)
-                    case .failure(let msg):
-                        Label(msg, systemImage: "xmark.circle.fill")
-                            .foregroundStyle(.red)
-                            .font(.caption)
-                    }
-                }
+                // Note: API key entry and testing has moved into the AIConnectionCard above
+                // for a single, consistent experience. The old key field is no longer shown here.
             }
         }
     }

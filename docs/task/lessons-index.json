@@ -1,0 +1,127 @@
+{
+  "generated_with": "generate-rules.prompt.md",
+  "ruleset": "index-driven-doc-maintenance-v1",
+  "updated": "2026-05-23",
+  "lessons": [
+    {
+      "id": "lesson-overlay-waveform-literal",
+      "keywords": [
+        "overlay",
+        "waveform",
+        "sine wave",
+        "Voice Memos",
+        "audio wave"
+      ],
+      "paths": [
+        "MacSpeechToAIToText/UI/**",
+        "MacSpeechToAIToText/Audio/**",
+        "docs/logic/menubar-ui.md",
+        "docs/logic/audio.md"
+      ],
+      "archive_refs": [
+        "2026-04-01 overlay waveform lessons"
+      ],
+      "active": true
+    },
+    {
+      "id": "lesson-microphone-diagnostics",
+      "keywords": [
+        "microphone",
+        "startup",
+        "intermittent",
+        "diagnostic",
+        "logs"
+      ],
+      "paths": [
+        "MacSpeechToAIToText/Audio/**",
+        "MacSpeechToAIToText/Core/DiagnosticLogger.swift",
+        "docs/logic/audio.md",
+        "docs/logic/core.md"
+      ],
+      "archive_refs": [
+        "2026-05-19 Mic failures need persistent logs"
+      ],
+      "active": true
+    },
+    {
+      "id": "lesson-settings-visual-regression",
+      "keywords": [
+        "settings",
+        "preferences",
+        "visual",
+        "layout",
+        "regression"
+      ],
+      "paths": [
+        "MacSpeechToAIToText/UI/**",
+        "docs/logic/menubar-ui.md"
+      ],
+      "archive_refs": [
+        "2026-05-19 settings page visual repair"
+      ],
+      "active": true
+    },
+    {
+      "id": "lesson-ok-insert-phrase",
+      "keywords": [
+        "OK",
+        "ok",
+        "okay",
+        "insert phrase",
+        "speech recognition"
+      ],
+      "paths": [
+        "MacSpeechToAIToText/Input/**",
+        "MacSpeechToAIToText/Audio/SendPhraseDetector.swift",
+        "docs/logic/input.md"
+      ],
+      "archive_refs": [
+        "2026-05-19 Exact OK insert phrase must match Speech okay"
+      ],
+      "active": true
+    },
+    {
+      "id": "lesson-generate-rules-targets",
+      "keywords": [
+        "generate-rules.prompt.md",
+        "Copilot",
+        "Codex",
+        "AGENTS.md",
+        "instructions",
+        "skills"
+      ],
+      "paths": [
+        "AGENTS.md",
+        ".github/**",
+        ".agents/**",
+        "docs/**"
+      ],
+      "archive_refs": [
+        "memory: selected targets only"
+      ],
+      "active": true
+    },
+    {
+      "id": "lesson-version-bump-rebuild-reopen",
+      "keywords": [
+        "version",
+        "build",
+        "rebuild",
+        "package",
+        "reopen",
+        "CFBundleShortVersionString",
+        "CFBundleVersion"
+      ],
+      "paths": [
+        "MacSpeechToAIToText/Info.plist",
+        "MacSpeechToAIToText/UI/**",
+        "scripts/build-app.sh",
+        "AGENTS.md"
+      ],
+      "archive_refs": [
+        "2026-05-23 Version bump and relaunch after every change"
+      ],
+      "active": true
+    }
+  ]
+}

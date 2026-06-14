@@ -17,7 +17,8 @@ struct HistoryListView: View {
     private var filteredRecords: [TranscriptionRecord] {
         let base: [TranscriptionRecord]
         switch section {
-        case .all:
+        case .all, .history:
+            // .history is the explicit top-level for the full library split; treat like All
             base = historyStore.unarchivedRecords
         case .unfiled:
             base = historyStore.unfiledRecords
@@ -27,7 +28,8 @@ struct HistoryListView: View {
             base = historyStore.archivedRecords
         case .failed:
             base = historyStore.failedRecords
-        case .prompts, .settings:
+        case .prompts, .settings, .dashboard:
+            // These sections do not render a HistoryListView
             base = []
         }
 
@@ -382,9 +384,18 @@ struct HistoryDetailView: View {
 
                     if !record.rawText.isEmpty {
                         Button {
-                            retranscribeMode = .cleanOnly
-                            retranscribePromptID = promptStore.selectedPromptID
-                            showRetranscribeSheet = true
+                            // Re-clean should be a direct one-click action with no options.
+                            // Use the prompt that was originally used on this record if available,
+                            // otherwise fall back to the current default.
+                            if let originalPromptName = record.promptUsed,
+                               let matchingPrompt = promptStore.prompts.first(where: { $0.name == originalPromptName }) {
+                                retranscribePromptID = matchingPrompt.id
+                            } else {
+                                retranscribePromptID = promptStore.selectedPromptID
+                            }
+
+                            showRetranscribeSheet = false
+                            performReclean()
                         } label: {
                             Label("Re-clean", systemImage: "sparkles")
                         }
@@ -392,21 +403,17 @@ struct HistoryDetailView: View {
                     }
                 }
 
-                // Cleanup failure indicator
+                // Guided Failure Recovery Card (Phase 4)
                 if record.cleanupFailed {
-                    HStack(spacing: 4) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                            .font(.caption)
-                        Text("AI cleanup failed")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                        if let reason = record.cleanupFailureReason {
-                            Text("— \(reason)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
+                    FailureRecoveryCard(
+                        record: record,
+                        result: nil,
+                        historyStore: historyStore,
+                        transcriptionCleaner: transcriptionCleaner,
+                        promptStore: promptStore,
+                        settings: settings
+                    ) {
+                        // Refresh the view after action
                     }
                 }
 
@@ -496,6 +503,7 @@ struct HistoryDetailView: View {
                     .font(.headline)
             }
 
+            // Model picker only needed when re-transcribing
             if retranscribeMode != .cleanOnly {
                 Picker("Model:", selection: $retranscribeModel) {
                     if transcriptionEngine.availableModels.isEmpty {
@@ -510,7 +518,9 @@ struct HistoryDetailView: View {
                 }
             }
 
-            if retranscribeMode != .transcribeOnly {
+            // Prompt picker only shown when user is configuring a combined operation.
+            // Pure "Re-clean" is now a direct action with no picker (see Re-clean button).
+            if retranscribeMode == .transcribeAndClean {
                 Picker("Cleanup Prompt:", selection: $retranscribePromptID) {
                     ForEach(promptStore.prompts) { prompt in
                         Text(prompt.name).tag(prompt.id)
